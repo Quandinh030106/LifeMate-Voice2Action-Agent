@@ -84,6 +84,22 @@ python run_benchmark.py --num_samples 10
 
 ---
 
+## ☁️ Running Fast on Kaggle GPU
+
+For fast submission generation on free Tesla T4 x2 or P100 GPUs:
+
+1. **Upload Dataset**: Upload `train+public_test` to Kaggle as a private dataset.
+2. **Import Notebook**: Create a new Kaggle Notebook, click **File -> Import Notebook**, and select [`kaggle_submission.ipynb`](file:///d:/PROJECTS/Zalo AIC 2026/LifeMate Agentic AI/kaggle_submission.ipynb).
+3. **Configure Environment**:
+   - Accelerator: **GPU T4 x2** (or GPU P100).
+   - Internet: **ON**.
+   - (For Private Repo) Add-ons -> Secrets: add secret named `GITHUB_PAT` with your GitHub token (`repo` scope).
+4. **Run All Cells**:
+   - The notebook clones the repo, resolves the dataset paths automatically, runs inference across all 634 public test audio samples, validates the output with `zaic_tools --validate`, and produces `/kaggle/working/submission.jsonl`.
+5. **Download Submission**: Download `submission.jsonl` and submit to Zalo AI Challenge portal.
+
+---
+
 ## 🐳 Docker Build & Run (Private Test)
 
 ```bash
