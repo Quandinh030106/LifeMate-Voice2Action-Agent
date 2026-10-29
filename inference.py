@@ -11,6 +11,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import functools
 import io
 import json
 import os
@@ -21,8 +22,15 @@ from pathlib import Path
 import numpy as np
 import torch
 
-# Fix Windows console UTF-8 output
-sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8")
+# Fix console UTF-8 and force immediate unbuffered output (crucial for Kaggle/Jupyter)
+try:
+    sys.stdout.reconfigure(encoding="utf-8", line_buffering=True)
+    sys.stderr.reconfigure(encoding="utf-8", line_buffering=True)
+except Exception:
+    pass
+
+# Ensure every print flushes immediately to Kaggle output cell in real time
+print = functools.partial(print, flush=True)
 
 # Fix all seeds for deterministic, reproducible results (BTC requirement)
 def seed_everything(seed: int = 42):
