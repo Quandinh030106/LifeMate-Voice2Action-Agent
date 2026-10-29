@@ -1,0 +1,22 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Data & Models (Do NOT upload large audio/zips to GitHub)
+data/
+*.zip
+*.wav
+models/
+.cache/
+
+# Results & Local logs
+result/*.jsonl
+!result/.gitkeep
+*.log
+.DS_Store
+
+# Virtual environments
+venv/
+env/
+.env
