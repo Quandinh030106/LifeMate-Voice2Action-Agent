@@ -4,12 +4,23 @@ Transcribes spoken Vietnamese requests into normalized text.
 from __future__ import annotations
 
 import os
+import warnings
+import logging
 import torch
 import soundfile as sf
 import numpy as np
 from pathlib import Path
 from typing import Optional, Union
 from transformers import AutoProcessor, AutoModelForSpeechSeq2Seq
+
+# ── Suppress known harmless transformers warnings ──────────────────────────────
+logging.getLogger("transformers").setLevel(logging.ERROR)
+warnings.filterwarnings("ignore", message=".*forced_decoder_ids.*")
+warnings.filterwarnings("ignore", message=".*generation_config.*")
+warnings.filterwarnings("ignore", message=".*max_new_tokens.*max_length.*")
+warnings.filterwarnings("ignore", message=".*clean_up_tokenization_spaces.*")
+warnings.filterwarnings("ignore", message=".*suppress_tokens.*begin_suppress_tokens.*")
+# ──────────────────────────────────────────────────────────────────────────────
 
 
 class VietnameseASR:
@@ -33,20 +44,35 @@ class VietnameseASR:
 
         print(f"Loading ASR model {model_id} on {self.device} ({self.dtype})...")
         try:
-            self.processor = AutoProcessor.from_pretrained(model_id, local_files_only=True)
+            self.processor = AutoProcessor.from_pretrained(
+                model_id,
+                local_files_only=True,
+                clean_up_tokenization_spaces=False,  # suppress BPE warning
+            )
             self.model = AutoModelForSpeechSeq2Seq.from_pretrained(
                 model_id,
                 torch_dtype=self.dtype,
                 low_cpu_mem_usage=True,
-                local_files_only=True
+                local_files_only=True,
             ).to(self.device)
         except Exception:
-            self.processor = AutoProcessor.from_pretrained(model_id)
+            self.processor = AutoProcessor.from_pretrained(
+                model_id,
+                clean_up_tokenization_spaces=False,
+            )
             self.model = AutoModelForSpeechSeq2Seq.from_pretrained(
                 model_id,
                 torch_dtype=self.dtype,
-                low_cpu_mem_usage=True
+                low_cpu_mem_usage=True,
             ).to(self.device)
+
+        # Fix: clear conflicting max_length from generation_config so
+        # max_new_tokens alone controls generation length (no conflict warning).
+        if hasattr(self.model, "generation_config"):
+            self.model.generation_config.max_length = None
+            # Clear forced_decoder_ids from config — we pass task/language at runtime
+            self.model.generation_config.forced_decoder_ids = None
+
         self.model.eval()
 
     def load_audio(self, audio_path: Union[str, Path], target_sr: int = 16000) -> np.ndarray:
@@ -88,24 +114,21 @@ class VietnameseASR:
         )
         input_features = inputs.input_features.to(self.device, dtype=self.dtype)
 
-        # Generate deterministic transcription
-        # For PhoWhisper, language='vi' and task='transcribe'
-        forced_decoder_ids = self.processor.get_decoder_prompt_ids(
-            language=language,
-            task="transcribe"
-        )
-
+        # Use task/language kwargs instead of deprecated forced_decoder_ids
+        # This avoids "forced_decoder_ids is deprecated" and "generation_config +
+        # generation args" warnings.
         predicted_ids = self.model.generate(
             input_features,
-            forced_decoder_ids=forced_decoder_ids,
+            task="transcribe",
+            language=language,
             do_sample=False,
             num_beams=1,
-            max_new_tokens=256
+            max_new_tokens=256,
         )
 
         transcription = self.processor.batch_decode(
             predicted_ids,
-            skip_special_tokens=True
+            skip_special_tokens=True,
         )[0]
 
         return transcription.strip()
