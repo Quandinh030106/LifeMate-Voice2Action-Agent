@@ -12,7 +12,7 @@ from pathlib import Path
 
 import torch
 from datasets import Dataset
-from peft import LoraConfig, get_peft_model, TaskType
+from peft import LoraConfig, TaskType
 from transformers import (
     AutoModelForCausalLM,
     AutoTokenizer,
@@ -142,37 +142,44 @@ def main():
         bias="none",
     )
 
-    # 5. Training Arguments
-    training_args = TrainingArguments(
-        output_dir=args.output_dir,
-        num_train_epochs=args.epochs,
-        per_device_train_batch_size=args.batch_size,
-        gradient_accumulation_steps=args.grad_accum,
-        learning_rate=args.lr,
-        lr_scheduler_type="cosine",
-        warmup_ratio=0.05,
-        logging_steps=10,
-        save_strategy="epoch",
-        evaluation_strategy="epoch" if val_dataset else "no",
-        fp16=(dtype == torch.float16),
-        bf16=(dtype == torch.bfloat16),
-        optim="adamw_torch",
-        save_total_limit=2,
-        report_to="none",
-        seed=42,
-    )
+    # 5. Training Arguments (robust across all transformers versions)
+    args_dict = {
+        "output_dir": args.output_dir,
+        "num_train_epochs": args.epochs,
+        "per_device_train_batch_size": args.batch_size,
+        "gradient_accumulation_steps": args.grad_accum,
+        "learning_rate": args.lr,
+        "lr_scheduler_type": "cosine",
+        "warmup_ratio": 0.05,
+        "logging_steps": 10,
+        "save_strategy": "epoch",
+        "fp16": (dtype == torch.float16),
+        "bf16": (dtype == torch.bfloat16),
+        "optim": "adamw_torch",
+        "save_total_limit": 2,
+        "report_to": "none",
+        "seed": 42,
+    }
+    eval_choice = "epoch" if val_dataset else "no"
+    try:
+        training_args = TrainingArguments(**args_dict, eval_strategy=eval_choice)
+    except TypeError:
+        training_args = TrainingArguments(**args_dict, evaluation_strategy=eval_choice)
 
-    # 6. Trainer
-    trainer = SFTTrainer(
-        model=model,
-        train_dataset=train_dataset,
-        eval_dataset=val_dataset,
-        peft_config=peft_config,
-        dataset_text_field="text",
-        max_seq_length=args.max_seq_length,
-        tokenizer=tokenizer,
-        args=training_args,
-    )
+    # 6. Trainer (robust across all trl versions)
+    trainer_dict = {
+        "model": model,
+        "train_dataset": train_dataset,
+        "eval_dataset": val_dataset,
+        "peft_config": peft_config,
+        "dataset_text_field": "text",
+        "max_seq_length": args.max_seq_length,
+        "args": training_args,
+    }
+    try:
+        trainer = SFTTrainer(**trainer_dict, processing_class=tokenizer)
+    except TypeError:
+        trainer = SFTTrainer(**trainer_dict, tokenizer=tokenizer)
 
     print("\nStarting Training...")
     trainer.train()

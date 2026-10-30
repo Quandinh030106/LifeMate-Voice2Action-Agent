@@ -38,6 +38,20 @@ class LocalLLMEngine:
         else:
             self.dtype = torch_dtype
 
+        # Check if model_name_or_path is intended as a local path but missing
+        model_path = Path(model_name_or_path)
+        is_intended_local = (
+            model_name_or_path.startswith(("/", "./", "../"))
+            or "\\" in model_name_or_path
+            or (len(model_name_or_path) > 1 and model_name_or_path[1] == ":")
+        )
+        if is_intended_local and not model_path.exists():
+            fallback_model = "Qwen/Qwen2.5-3B-Instruct"
+            print(f"[LLM Warning] Local path '{model_name_or_path}' does not exist on disk!")
+            print(f"[LLM Fallback] Automatically falling back to base model '{fallback_model}'.")
+            model_name_or_path = fallback_model
+            local_files_only = False
+
         print(f"Loading LLM {model_name_or_path} on {self.device} (dtype: {self.dtype}, 4bit: {load_in_4bit})...")
         try:
             self.tokenizer = AutoTokenizer.from_pretrained(
