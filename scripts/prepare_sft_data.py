@@ -1,5 +1,6 @@
 """Prepare SFT (Supervised Fine-Tuning) data for Qwen2.5 on LifeMate train.jsonl.
 Converts 1,545 multi-turn agentic trajectories into standard ChatML format.
+Includes optional Unseen Tool Augmentations to prevent hard-coding and ensure zero-shot generalization.
 """
 from __future__ import annotations
 
@@ -129,6 +130,169 @@ def format_sample_to_messages(
     }
 
 
+def generate_unseen_tool_augmentations() -> List[Dict[str, Any]]:
+    """Generate synthetic examples with novel/unseen apps and tools.
+    Explicitly forces the LLM to learn Schema-Conditioned reasoning rather than memorizing known tools.
+    """
+    augmentations = []
+
+    # Unseen Tool 1: food_delivery
+    tools_food = [
+        {
+            "type": "function",
+            "function": {
+                "name": "food_delivery.search_dishes",
+                "description": "Tìm kiếm món ăn và nhà hàng gần vị trí người dùng.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "query": {"type": "string", "description": "Tên món ăn hoặc quán ăn"}
+                    },
+                    "required": ["query"]
+                }
+            }
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "food_delivery.order",
+                "description": "Đặt món ăn giao tận nơi.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "dish_id": {"type": "string", "description": "Mã món ăn"},
+                        "quantity": {"type": "integer", "description": "Số lượng phần ăn"},
+                        "address": {"type": "string", "description": "Địa chỉ giao hàng"}
+                    },
+                    "required": ["dish_id", "quantity", "address"]
+                }
+            }
+        }
+    ]
+
+    augmentations.append({
+        "id": "syn_food_01",
+        "tools": tools_food,
+        "messages": [
+            {"role": "system", "content": "Bạn là LifeMate — Trợ lý AI điều hành tác vụ thông minh.\nThời gian hiện tại: 2026-11-20T12:00:00+07:00\nĐịa chỉ nhà: 123 Lê Lợi, Quận 1, TP.HCM"},
+            {"role": "user", "content": "Đặt giúp tôi 2 phần phở bò tái nạm về nhà ăn trưa với."},
+            {"role": "assistant", "content": "", "tool_calls": [{"type": "function", "function": {"name": "food_delivery.search_dishes", "arguments": {"query": "phở bò tái nạm"}}}]},
+            {"role": "tool", "name": "food_delivery.search_dishes", "content": json.dumps({"ok": True, "dishes": [{"dish_id": "pho_01", "name": "Phở bò tái nạm đặc biệt", "price": 65000}]})},
+            {"role": "assistant", "content": "", "tool_calls": [{"type": "function", "function": {"name": "food_delivery.order", "arguments": {"dish_id": "pho_01", "quantity": 2, "address": "123 Lê Lợi, Quận 1, TP.HCM"}}}]},
+            {"role": "tool", "name": "food_delivery.order", "content": json.dumps({"ok": True, "order_id": "ord_882", "status": "confirmed"})},
+            {"role": "assistant", "content": "Đã đặt 2 phần phở bò tái nạm giao về nhà cho bạn thành công."}
+        ]
+    })
+
+    # Unseen Tool 2: ev_charging (Trạm sạc xe điện)
+    tools_ev = [
+        {
+            "type": "function",
+            "function": {
+                "name": "ev_charging.find_station",
+                "description": "Tìm trạm sạc xe điện gần nhất.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "area": {"type": "string", "description": "Khu vực tìm kiếm"}
+                    },
+                    "required": ["area"]
+                }
+            }
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "ev_charging.start_session",
+                "description": "Kích hoạt phiên sạc xe tại trụ sạc.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "station_id": {"type": "string", "description": "Mã trạm sạc"},
+                        "target_percent": {"type": "integer", "description": "Mức pin mong muốn (%)"}
+                    },
+                    "required": ["station_id", "target_percent"]
+                }
+            }
+        }
+    ]
+
+    augmentations.append({
+        "id": "syn_ev_01",
+        "tools": tools_ev,
+        "messages": [
+            {"role": "system", "content": "Bạn là LifeMate — Trợ lý AI điều hành tác vụ thông minh.\nThời gian hiện tại: 2026-11-20T15:30:00+07:00\nThành phố: Hà Nội"},
+            {"role": "user", "content": "Tìm trạm sạc ở Cầu Giấy rồi bật sạc lên 80% giúp mình nhé."},
+            {"role": "assistant", "content": "", "tool_calls": [{"type": "function", "function": {"name": "ev_charging.find_station", "arguments": {"area": "Cầu Giấy"}}}]},
+            {"role": "tool", "name": "ev_charging.find_station", "content": json.dumps({"ok": True, "stations": [{"id": "st_cg_09", "name": "Trạm sạc Vincom Cầu Giấy", "available_ports": 3}]})},
+            {"role": "assistant", "content": "", "tool_calls": [{"type": "function", "function": {"name": "ev_charging.start_session", "arguments": {"station_id": "st_cg_09", "target_percent": 80}}}]},
+            {"role": "tool", "name": "ev_charging.start_session", "content": json.dumps({"ok": True, "status": "charging_started"})},
+            {"role": "assistant", "content": "Đã bắt đầu phiên sạc xe điện đến 80% tại Trạm sạc Vincom Cầu Giấy."}
+        ]
+    })
+
+    # Unseen Tool 3: Out-of-scope test with novel apps
+    # User asks for hotel booking, but installed tools only include ev_charging
+    augmentations.append({
+        "id": "syn_out_of_scope_01",
+        "tools": tools_ev,
+        "messages": [
+            {"role": "system", "content": "Bạn là LifeMate — Trợ lý AI điều hành tác vụ thông minh.\nThời gian hiện tại: 2026-11-20T10:00:00+07:00"},
+            {"role": "user", "content": "Đặt phòng khách sạn Mường Thanh ở Nha Trang giúp tôi 3 đêm."},
+            {"role": "assistant", "content": "Yêu cầu này nằm ngoài phạm vi hỗ trợ của các ứng dụng hiện có."}
+        ]
+    })
+
+    # Unseen Tool 4: smart_garden (Tưới cây tự động)
+    tools_garden = [
+        {
+            "type": "function",
+            "function": {
+                "name": "smart_garden.get_moisture",
+                "description": "Đo độ ẩm đất của khu vực sân vườn.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "zone": {"type": "string", "description": "Tên khu vực vườn"}
+                    },
+                    "required": ["zone"]
+                }
+            }
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "smart_garden.water",
+                "description": "Bật van tưới nước sân vườn.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "zone": {"type": "string", "description": "Tên khu vực"},
+                        "duration_minutes": {"type": "integer", "description": "Thời gian tưới"}
+                    },
+                    "required": ["zone", "duration_minutes"]
+                }
+            }
+        }
+    ]
+
+    augmentations.append({
+        "id": "syn_garden_01",
+        "tools": tools_garden,
+        "messages": [
+            {"role": "system", "content": "Bạn là LifeMate — Trợ lý AI điều hành tác vụ thông minh.\nThời gian hiện tại: 2026-11-20T17:00:00+07:00"},
+            {"role": "user", "content": "Kiểm tra độ ẩm vườn lan, nếu khô dưới 40% thì tưới 10 phút nhé."},
+            {"role": "assistant", "content": "", "tool_calls": [{"type": "function", "function": {"name": "smart_garden.get_moisture", "arguments": {"zone": "vườn lan"}}}]},
+            {"role": "tool", "name": "smart_garden.get_moisture", "content": json.dumps({"ok": True, "moisture": 32, "status": "dry"})},
+            {"role": "assistant", "content": "", "tool_calls": [{"type": "function", "function": {"name": "smart_garden.water", "arguments": {"zone": "vườn lan", "duration_minutes": 10}}}]},
+            {"role": "tool", "name": "smart_garden.water", "content": json.dumps({"ok": True, "status": "watering"})},
+            {"role": "assistant", "content": "Độ ẩm vườn lan hiện tại là 32%, đã kích hoạt tưới nước trong 10 phút."}
+        ]
+    })
+
+    return augmentations
+
+
 def main():
     parser = argparse.ArgumentParser(description="Prepare SFT data for LifeMate")
     parser.add_argument("--data_dir", type=str, default=None,
@@ -139,6 +303,8 @@ def main():
                         help="Validation split ratio (default: 0.1)")
     parser.add_argument("--seed", type=int, default=42,
                         help="Random seed for deterministic split")
+    parser.add_argument("--augment_unseen", action="store_true", default=True,
+                        help="Include synthetic samples with unseen tools to prevent hardcoding")
     args = parser.parse_args()
 
     random.seed(args.seed)
@@ -171,6 +337,11 @@ def main():
     for s in samples:
         traj = format_sample_to_messages(s, catalog)
         processed.append(traj)
+
+    if args.augment_unseen:
+        unseen_aug = generate_unseen_tool_augmentations()
+        print(f"Adding {len(unseen_aug)} synthetic unseen tool augmentations for robust zero-shot generalization...")
+        processed.extend(unseen_aug)
 
     # Shuffle deterministically
     random.shuffle(processed)
