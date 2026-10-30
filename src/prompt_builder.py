@@ -152,14 +152,12 @@ def build_messages(
 
     # Process conversation history if present
     for turn in item.get("history", []):
-        # User turn
-        if "audio_text" in turn:
-            messages.append({"role": "user", "content": turn["audio_text"]})
-        elif "text" in turn:
-            messages.append({"role": "user", "content": turn["text"]})
+        role = turn.get("role")
+        if role == "user":
+            user_content = turn.get("audio_text") or turn.get("text") or "[Yêu cầu người dùng trước đó]"
+            messages.append({"role": "user", "content": user_content})
 
-        # Assistant turn
-        if turn.get("role") == "assistant" or "tool_calls" in turn or "text" in turn:
+        elif role == "assistant":
             asst_msg: Dict[str, Any] = {"role": "assistant"}
             if "text" in turn:
                 asst_msg["content"] = turn["text"]
@@ -169,7 +167,7 @@ def build_messages(
                         "type": "function",
                         "function": {
                             "name": tc["name"],
-                            "arguments": json.dumps(tc.get("arguments", {}), ensure_ascii=False)
+                            "arguments": tc.get("arguments", {})
                         }
                     }
                     for tc in turn["tool_calls"]

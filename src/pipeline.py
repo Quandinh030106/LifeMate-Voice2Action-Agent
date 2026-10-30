@@ -34,7 +34,18 @@ class LifeMatePipeline:
         start_time = time.time()
         user_request_text = None
 
-        # 1. Speech-to-Text (ASR) if audio is requested and available
+        # 1. Transcribe conversation history user turns if audio present without text
+        if use_audio and self.asr_model is not None:
+            for turn in item.get("history", []):
+                if turn.get("role") == "user" and not turn.get("audio_text") and "audio" in turn:
+                    hist_path = split_dir / turn["audio"]
+                    if hist_path.is_file():
+                        try:
+                            turn["audio_text"] = self.asr_model.transcribe(hist_path)
+                        except Exception:
+                            pass
+
+        # 2. Speech-to-Text (ASR) for final user audio
         if use_audio and self.asr_model is not None and "audio" in item:
             audio_rel_path = item["audio"]
             # Path can be relative to split directory

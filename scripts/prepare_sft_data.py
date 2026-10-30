@@ -37,12 +37,12 @@ def format_sample_to_messages(
 
     # 3. Conversation history if present
     for turn in sample.get("history", []):
-        if "audio_text" in turn:
-            messages.append({"role": "user", "content": turn["audio_text"]})
-        elif "text" in turn:
-            messages.append({"role": "user", "content": turn["text"]})
+        role = turn.get("role")
+        if role == "user":
+            user_content = turn.get("audio_text") or turn.get("text") or "[Yêu cầu người dùng trước đó]"
+            messages.append({"role": "user", "content": user_content})
 
-        if turn.get("role") == "assistant" or "tool_calls" in turn:
+        elif role == "assistant":
             asst_turn: Dict[str, Any] = {"role": "assistant", "content": turn.get("text", "")}
             if "tool_calls" in turn:
                 asst_turn["tool_calls"] = [
