@@ -5,6 +5,7 @@ Supports automatic adapter merging for standalone, offline inference.
 from __future__ import annotations
 
 import argparse
+import inspect
 import json
 import os
 import sys
@@ -142,7 +143,10 @@ def main():
         bias="none",
     )
 
-    # 5. Training Arguments (robust across all transformers versions)
+    # 5. Training Arguments (dynamically filtered across transformers versions)
+    sig_ta = inspect.signature(TrainingArguments.__init__)
+    valid_ta_params = set(sig_ta.parameters.keys())
+
     args_dict = {
         "output_dir": args.output_dir,
         "num_train_epochs": args.epochs,
@@ -150,7 +154,7 @@ def main():
         "gradient_accumulation_steps": args.grad_accum,
         "learning_rate": args.lr,
         "lr_scheduler_type": "cosine",
-        "warmup_ratio": 0.05,
+        "warmup_steps": 20,
         "logging_steps": 10,
         "save_strategy": "epoch",
         "fp16": (dtype == torch.float16),
@@ -161,12 +165,19 @@ def main():
         "seed": 42,
     }
     eval_choice = "epoch" if val_dataset else "no"
-    try:
-        training_args = TrainingArguments(**args_dict, eval_strategy=eval_choice)
-    except TypeError:
-        training_args = TrainingArguments(**args_dict, evaluation_strategy=eval_choice)
+    if "eval_strategy" in valid_ta_params:
+        args_dict["eval_strategy"] = eval_choice
+    elif "evaluation_strategy" in valid_ta_params:
+        args_dict["evaluation_strategy"] = eval_choice
 
-    # 6. Trainer (robust across all trl versions)
+    filtered_args = {k: v for k, v in args_dict.items() if k in valid_ta_params}
+    print(f"[Config] Instantiating TrainingArguments with {len(filtered_args)} parameters...")
+    training_args = TrainingArguments(**filtered_args)
+
+    # 6. Trainer (dynamically filtered across trl versions)
+    sig_tr = inspect.signature(SFTTrainer.__init__)
+    valid_tr_params = set(sig_tr.parameters.keys())
+
     trainer_dict = {
         "model": model,
         "train_dataset": train_dataset,
@@ -176,10 +187,14 @@ def main():
         "max_seq_length": args.max_seq_length,
         "args": training_args,
     }
-    try:
-        trainer = SFTTrainer(**trainer_dict, processing_class=tokenizer)
-    except TypeError:
-        trainer = SFTTrainer(**trainer_dict, tokenizer=tokenizer)
+    if "processing_class" in valid_tr_params:
+        trainer_dict["processing_class"] = tokenizer
+    elif "tokenizer" in valid_tr_params:
+        trainer_dict["tokenizer"] = tokenizer
+
+    filtered_trainer_dict = {k: v for k, v in trainer_dict.items() if k in valid_tr_params}
+    print(f"[Config] Instantiating SFTTrainer with {len(filtered_trainer_dict)} parameters...")
+    trainer = SFTTrainer(**filtered_trainer_dict)
 
     print("\nStarting Training...")
     trainer.train()
