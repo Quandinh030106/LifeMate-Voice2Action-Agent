@@ -63,18 +63,32 @@ The pipeline turns Vietnamese spoken requests into verifiable application action
 
 ## 🚀 How to Run
 
-### 1. Generating Submission for Public Test
+### 1. High-Performance v2.0 Pipeline (SFT + NVIDIA Parakeet ASR)
 ```bash
-# Run full audio pipeline on public test
-python inference.py --split public_test --output result/submission.jsonl
+# Step 1: Prepare SFT training data from train.jsonl (1545 multi-turn samples)
+python scripts/prepare_sft_data.py --output_dir data/sft
 
-# Validate generated submission schema
+# Step 2: Fine-tune Qwen2.5-3B-Instruct via LoRA and auto-merge standalone model
+python train_sft.py \
+    --model_name_or_path Qwen/Qwen2.5-3B-Instruct \
+    --train_file data/sft/sft_train.jsonl \
+    --output_dir models/qwen-lora \
+    --merged_dir models/lifemate-qwen-sft
+
+# Step 3: Run inference on public test with NVIDIA Parakeet + Fine-Tuned Agent
+python inference.py \
+    --split public_test \
+    --asr_engine auto \
+    --llm_model models/lifemate-qwen-sft \
+    --output result/submission.jsonl
+
+# Step 4: Validate generated submission schema
 python -m zaic_tools --split public_test --validate result/submission.jsonl
 ```
 
-### 2. Fast Text-only Verification on Train Split
+### 2. Fast Baseline Inference (Without Fine-Tuning)
 ```bash
-python inference.py --split train --no_audio --limit 20 --output result/train_sub.jsonl
+python inference.py --split public_test --output result/submission.jsonl
 ```
 
 ### 3. Running Benchmark & Score Evaluation
@@ -84,19 +98,21 @@ python run_benchmark.py --num_samples 10
 
 ---
 
-## ☁️ Running Fast on Kaggle GPU
+## ☁️ Running Fast on Kaggle GPU (Tesla T4 x2 / P100)
 
-For fast submission generation on free Tesla T4 x2 or P100 GPUs:
+We provide two pre-configured Kaggle notebooks:
+- **`kaggle_train_and_inference_v2.ipynb`** *(Recommended)*: Complete pipeline that fine-tunes Qwen2.5-3B on train trajectories, merges model, and generates top-tier submission with NVIDIA Parakeet ASR.
+- **`kaggle_submission.ipynb`**: Zero-shot baseline inference runner.
 
+**Steps to run on Kaggle:**
 1. **Upload Dataset**: Upload `train+public_test` to Kaggle as a private dataset.
-2. **Import Notebook**: Create a new Kaggle Notebook, click **File -> Import Notebook**, and select [`kaggle_submission.ipynb`](file:///d:/PROJECTS/Zalo AIC 2026/LifeMate Agentic AI/kaggle_submission.ipynb).
+2. **Import Notebook**: In Kaggle, click **File -> Import Notebook**, select `kaggle_train_and_inference_v2.ipynb`.
 3. **Configure Environment**:
    - Accelerator: **GPU T4 x2** (or GPU P100).
    - Internet: **ON**.
-   - (For Private Repo) Add-ons -> Secrets: add secret named `GITHUB_PAT` with your GitHub token (`repo` scope).
 4. **Run All Cells**:
-   - The notebook clones the repo, resolves the dataset paths automatically, runs inference across all 634 public test audio samples, validates the output with `zaic_tools --validate`, and produces `/kaggle/working/submission.jsonl`.
-5. **Download Submission**: Download `submission.jsonl` and submit to Zalo AI Challenge portal.
+   - The notebook automatically prepares data, runs SFT (~20 mins), merges weights, executes public test inference, validates with `zaic_tools --validate`, and outputs `/kaggle/working/submission.jsonl`.
+5. **Download Submission**: Download `submission.jsonl` from Kaggle Output and submit to Zalo AI Challenge portal.
 
 ---
 

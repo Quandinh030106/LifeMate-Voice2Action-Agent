@@ -77,9 +77,11 @@ def parse_args():
                         help="Skip ASR and use audio_text directly (debugging/training only).")
     parser.add_argument("--limit", type=int, default=None,
                         help="Limit number of samples to process (for testing).")
-    parser.add_argument("--asr_model", type=str, default="vinai/PhoWhisper-small",
+    parser.add_argument("--asr_engine", type=str, default="auto", choices=["auto", "nvidia", "phowhisper"],
+                        help="ASR backend engine (auto, nvidia, or phowhisper).")
+    parser.add_argument("--asr_model", type=str, default=None,
                         help="ASR model HuggingFace ID or local path.")
-    parser.add_argument("--llm_model", type=str, default="Qwen/Qwen2.5-1.5B-Instruct",
+    parser.add_argument("--llm_model", type=str, default="Qwen/Qwen2.5-3B-Instruct",
                         help="LLM model HuggingFace ID or local path.")
     parser.add_argument("--max_steps", type=int, default=5,
                         help="Max agent reasoning steps per sample.")
@@ -128,8 +130,9 @@ def main():
 
     asr = None
     if not args.no_audio:
-        print(f"Loading ASR model: {args.asr_model}...")
-        asr = VietnameseASR(model_id=args.asr_model, device=device)
+        print(f"Loading ASR engine: {args.asr_engine} (model: {args.asr_model or 'default'})...")
+        asr = VietnameseASR(engine=args.asr_engine, model_id=args.asr_model, device=device)
+        print(f"ASR active engine: {asr.engine_name}")
 
     print(f"Loading LLM model: {args.llm_model}...")
     llm = LocalLLMEngine(model_name_or_path=args.llm_model, device=device)
