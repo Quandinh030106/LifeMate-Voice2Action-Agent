@@ -124,28 +124,94 @@ def main():
     print(f"Output file: {output_path}")
     print(f"Use Audio:   {not args.no_audio}")
 
-    # 2. Load Models
-    device = "cuda" if torch.cuda.is_available() else "cpu"
-    print(f"Using device: {device}")
+    # 2. Stage 1: Audio Transcription Cache & Batch Processing
+    audio_transcripts = {}
+    transcripts_cache_file = output_path.parent / f"transcripts_{args.split}.json"
 
-    asr = None
+    if transcripts_cache_file.is_file():
+        try:
+            with open(transcripts_cache_file, "r", encoding="utf-8") as f_tr:
+                audio_transcripts = json.load(f_tr)
+            print(f"Loaded {len(audio_transcripts)} cached audio transcriptions from {transcripts_cache_file}.")
+        except Exception:
+            audio_transcripts = {}
+
     if not args.no_audio:
-        print(f"Loading ASR engine: {args.asr_engine} (model: {args.asr_model or 'default'})...")
-        asr = VietnameseASR(engine=args.asr_engine, model_id=args.asr_model, device=device)
-        print(f"ASR active engine: {asr.engine_name}")
+        # Scan all required audio paths
+        audio_rel_paths = set()
+        with open(input_jsonl, encoding="utf-8") as fin_scan:
+            for line in fin_scan:
+                if not line.strip():
+                    continue
+                item = json.loads(line)
+                if "audio" in item and item["audio"]:
+                    audio_rel_paths.add(item["audio"].replace("\\", "/"))
+                for turn in item.get("history", []):
+                    if turn.get("role") == "user" and "audio" in turn and not turn.get("audio_text"):
+                        audio_rel_paths.add(turn["audio"].replace("\\", "/"))
 
+        missing_paths = [
+            rel_p for rel_p in audio_rel_paths
+            if rel_p not in audio_transcripts and (split_dir / rel_p).is_file()
+        ]
+
+        if missing_paths:
+            print(f"Transcribing {len(missing_paths)} audio files using {args.asr_engine}...")
+            asr = VietnameseASR(engine=args.asr_engine, model_id=args.asr_model, device=device)
+            print(f"ASR active engine: {asr.engine_name}")
+
+            full_paths = [split_dir / p for p in missing_paths]
+            if hasattr(asr.asr_model, "transcribe_batch") and full_paths:
+                try:
+                    results = asr.asr_model.transcribe_batch(full_paths, batch_size=16)
+                    for rel_p, text in zip(missing_paths, results):
+                        audio_transcripts[rel_p] = text
+                except Exception as e:
+                    print(f"Batch ASR warning: {e}. Falling back to iterative...")
+                    for rel_p in missing_paths:
+                        try:
+                            audio_transcripts[rel_p] = asr.transcribe(split_dir / rel_p)
+                        except Exception:
+                            pass
+            else:
+                for rel_p in missing_paths:
+                    try:
+                        audio_transcripts[rel_p] = asr.transcribe(split_dir / rel_p)
+                    except Exception:
+                        pass
+
+            try:
+                with open(transcripts_cache_file, "w", encoding="utf-8") as f_tr:
+                    json.dump(audio_transcripts, f_tr, ensure_ascii=False, indent=2)
+                print(f"Saved {len(audio_transcripts)} transcriptions to cache.")
+            except Exception:
+                pass
+
+            # CRITICAL: Free ASR model from GPU VRAM completely before loading LLM!
+            del asr
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+            import gc
+            gc.collect()
+            print("Freed ASR model from GPU VRAM to maximize memory for LLM.")
+
+    # 3. Stage 2: Load LLM with 100% Free VRAM Headroom
     print(f"Loading LLM model: {args.llm_model}...")
     llm = LocalLLMEngine(model_name_or_path=args.llm_model, device=device)
 
     catalog = json.load(open(catalog_path, encoding="utf-8"))
 
-    # 3. Setup Agent and Pipeline
+    # 4. Setup Agent and Pipeline
     agent = LifeMateAgent(
         llm_generate_fn=llm.generate,
         catalog=catalog,
         max_steps=args.max_steps
     )
-    pipeline = LifeMatePipeline(agent=agent, asr_model=asr)
+    pipeline = LifeMatePipeline(
+        agent=agent,
+        asr_model=None,
+        audio_transcripts=audio_transcripts
+    )
 
     # 4. Check for already processed samples (Resume support)
     processed_ids = set()

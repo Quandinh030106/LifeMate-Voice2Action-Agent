@@ -96,17 +96,21 @@ class LocalLLMEngine:
                     **model_kwargs
                 )
         else:
+            if self.device == "cuda":
+                model_kwargs["device_map"] = "auto"
             try:
                 self.model = AutoModelForCausalLM.from_pretrained(
                     model_name_or_path,
                     local_files_only=local_files_only,
                     **model_kwargs
-                ).to(self.device)
+                )
             except Exception:
                 self.model = AutoModelForCausalLM.from_pretrained(
                     model_name_or_path,
                     **model_kwargs
-                ).to(self.device)
+                )
+            if "device_map" not in model_kwargs:
+                self.model = self.model.to(self.device)
 
         # Stop when either EOS or </tool_call> is generated
         self.stop_token_ids = [self.tokenizer.eos_token_id]

@@ -18,9 +18,11 @@ class LifeMatePipeline:
         self,
         agent: LifeMateAgent,
         asr_model: Optional[Any] = None,
+        audio_transcripts: Optional[Dict[str, str]] = None,
     ):
         self.agent = agent
         self.asr_model = asr_model
+        self.audio_transcripts = audio_transcripts or {}
 
     def process_sample(
         self,
@@ -35,9 +37,12 @@ class LifeMatePipeline:
         user_request_text = None
 
         # 1. Transcribe conversation history user turns if audio present without text
-        if use_audio and self.asr_model is not None:
-            for turn in item.get("history", []):
-                if turn.get("role") == "user" and not turn.get("audio_text") and "audio" in turn:
+        for turn in item.get("history", []):
+            if turn.get("role") == "user" and not turn.get("audio_text") and "audio" in turn:
+                rel = turn["audio"].replace("\\", "/")
+                if rel in self.audio_transcripts:
+                    turn["audio_text"] = self.audio_transcripts[rel]
+                elif use_audio and self.asr_model is not None:
                     hist_path = split_dir / turn["audio"]
                     if hist_path.is_file():
                         try:
@@ -46,22 +51,25 @@ class LifeMatePipeline:
                             pass
 
         # 2. Speech-to-Text (ASR) for final user audio
-        if use_audio and self.asr_model is not None and "audio" in item:
+        if "audio" in item:
+            rel = item["audio"].replace("\\", "/")
+            if rel in self.audio_transcripts:
+                user_request_text = self.audio_transcripts[rel]
+
+        if not user_request_text and use_audio and self.asr_model is not None and "audio" in item:
             audio_rel_path = item["audio"]
-            # Path can be relative to split directory
             audio_full_path = split_dir / audio_rel_path
             if audio_full_path.is_file():
                 try:
                     user_request_text = self.asr_model.transcribe(audio_full_path)
                 except Exception as e:
                     print(f"ASR error on {audio_full_path}: {e}")
-                    user_request_text = item.get("audio_text", "")
 
         # Fallback to audio_text if ASR not used or failed
         if not user_request_text:
             user_request_text = item.get("audio_text", "")
 
-        # 2. Run ReAct Agent on the transcribed text
+        # 3. Run ReAct Agent on the transcribed text
         tool_calls, state_hash, meta = self.agent.run_sample(
             item=item,
             split=split_name,
