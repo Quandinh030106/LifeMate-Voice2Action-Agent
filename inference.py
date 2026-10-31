@@ -124,6 +124,9 @@ def main():
     print(f"Output file: {output_path}")
     print(f"Use Audio:   {not args.no_audio}")
 
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    print(f"Using device: {device}")
+
     # 2. Stage 1: Audio Transcription Cache & Batch Processing
     audio_transcripts = {}
     transcripts_cache_file = output_path.parent / f"transcripts_{args.split}.json"
