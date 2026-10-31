@@ -14,6 +14,15 @@ from pathlib import Path
 import torch
 from datasets import Dataset
 from peft import LoraConfig, TaskType
+
+# Bypass PEFT torchao incompatibility bug on Kaggle Python 3.13
+try:
+    import peft.import_utils
+    peft.import_utils.is_torchao_available = lambda: False
+    import peft.tuners.lora.torchao as peft_torchao
+    peft_torchao.is_torchao_available = lambda: False
+except Exception:
+    pass
 from transformers import (
     AutoModelForCausalLM,
     AutoTokenizer,
