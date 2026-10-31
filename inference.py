@@ -164,9 +164,9 @@ def main():
             print(f"ASR active engine: {asr.engine_name}")
 
             full_paths = [split_dir / p for p in missing_paths]
-            if hasattr(asr.asr_model, "transcribe_batch") and full_paths:
+            if hasattr(asr, "transcribe_batch") and full_paths:
                 try:
-                    results = asr.asr_model.transcribe_batch(full_paths, batch_size=16)
+                    results = asr.transcribe_batch(full_paths, batch_size=16)
                     for rel_p, text in zip(missing_paths, results):
                         audio_transcripts[rel_p] = text
                 except Exception as e:
