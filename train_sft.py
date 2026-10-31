@@ -129,8 +129,12 @@ def main():
     train_dataset = load_and_format_dataset(args.train_file, tokenizer)
     val_dataset = load_and_format_dataset(args.val_file, tokenizer) if Path(args.val_file).is_file() else None
 
-    # 3. Load Model in bfloat16 / float16 with SDPA
-    dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
+    # 3. Load Model in float16 (for T4/P100 CC < 8.0) or bfloat16 (for Ampere+ CC >= 8.0) with SDPA
+    if torch.cuda.is_available():
+        major, _ = torch.cuda.get_device_capability()
+        dtype = torch.bfloat16 if (major >= 8 and torch.cuda.is_bf16_supported()) else torch.float16
+    else:
+        dtype = torch.float32
     print(f"\nLoading Base Model {args.model_name_or_path} ({dtype}, SDPA)...")
 
     model = AutoModelForCausalLM.from_pretrained(

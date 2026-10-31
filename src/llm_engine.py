@@ -34,7 +34,11 @@ class LocalLLMEngine:
             self.device = device
 
         if torch_dtype is None:
-            self.dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
+            if torch.cuda.is_available():
+                major, _ = torch.cuda.get_device_capability()
+                self.dtype = torch.bfloat16 if (major >= 8 and torch.cuda.is_bf16_supported()) else torch.float16
+            else:
+                self.dtype = torch.float32
         else:
             self.dtype = torch_dtype
 
