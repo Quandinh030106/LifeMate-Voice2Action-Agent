@@ -102,11 +102,13 @@ class NvidiaParakeetASR:
 
 
 class PhoWhisperASR:
-    """Wrapper for PhoWhisper / Whisper sequence-to-sequence ASR models."""
+    """Wrapper for OpenAI Whisper & PhoWhisper sequence-to-sequence ASR models.
+    Provides neutral, un-biased, high-accuracy Vietnamese speech transcription.
+    """
 
     def __init__(
         self,
-        model_id: str = "vinai/PhoWhisper-medium",
+        model_id: str = "openai/whisper-large-v3-turbo",
         device: Optional[str] = None,
         torch_dtype: Optional[torch.dtype] = None
     ):
@@ -115,7 +117,7 @@ class PhoWhisperASR:
         self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
         self.dtype = torch_dtype or (torch.float16 if self.device == "cuda" else torch.float32)
 
-        print(f"Loading PhoWhisper/Whisper ASR ({model_id}) on {self.device} ({self.dtype})...")
+        print(f"Loading Whisper/PhoWhisper ASR ({model_id}) on {self.device} ({self.dtype})...")
         try:
             self.processor = AutoProcessor.from_pretrained(
                 model_id,
@@ -140,7 +142,7 @@ class PhoWhisperASR:
                     low_cpu_mem_usage=True,
                 ).to(self.device)
             except Exception as e:
-                fallback_id = "vinai/PhoWhisper-small"
+                fallback_id = "vinai/PhoWhisper-medium"
                 print(f"[ASR Warning] Could not load {model_id} ({e}). Falling back to {fallback_id}...")
                 self.processor = AutoProcessor.from_pretrained(
                     fallback_id,
@@ -212,26 +214,31 @@ class VietnameseASR:
         device: Optional[str] = None
     ):
         """
-        engine: "nvidia" (Parakeet), "phowhisper" (VinAI), or "auto" (tries nvidia, falls back to phowhisper).
+        engine: "openai" / "whisper" (Whisper Large-v3-turbo), "phowhisper" (PhoWhisper), "nvidia" (Parakeet), or "auto" (default: openai).
         """
         self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
         self.engine_name = engine
         self._impl = None
 
-        if engine in ("auto", "nvidia"):
-            try:
-                nvidia_model = model_id or "nvidia/parakeet-ctc-0.6b-vi"
-                self._impl = NvidiaParakeetASR(model_name=nvidia_model, device=self.device)
-                self.engine_name = "nvidia"
-            except Exception as e:
-                if engine == "nvidia":
-                    raise e
-                print(f"[ASR] NeMo / NVIDIA model not available ({e}). Falling back to PhoWhisper.")
+        if engine in ("auto", "openai", "whisper"):
+            default_model = model_id or "openai/whisper-large-v3-turbo"
+            self._impl = PhoWhisperASR(model_id=default_model, device=self.device)
+            self.engine_name = "openai"
 
-        if self._impl is None:
+        elif engine == "nvidia":
+            nvidia_model = model_id or "nvidia/parakeet-ctc-0.6b-vi"
+            self._impl = NvidiaParakeetASR(model_name=nvidia_model, device=self.device)
+            self.engine_name = "nvidia"
+
+        elif engine == "phowhisper":
             whisper_model = model_id or "vinai/PhoWhisper-medium"
             self._impl = PhoWhisperASR(model_id=whisper_model, device=self.device)
             self.engine_name = "phowhisper"
+
+        if self._impl is None:
+            default_model = model_id or "openai/whisper-large-v3-turbo"
+            self._impl = PhoWhisperASR(model_id=default_model, device=self.device)
+            self.engine_name = "openai"
 
     def transcribe(self, audio: Union[str, Path, np.ndarray]) -> str:
         return self._impl.transcribe(audio)

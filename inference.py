@@ -78,10 +78,10 @@ def parse_args():
                         help="Skip ASR and use audio_text directly (debugging/training only).")
     parser.add_argument("--limit", type=int, default=None,
                         help="Limit number of samples to process (for testing).")
-    parser.add_argument("--asr_engine", type=str, default="auto", choices=["auto", "nvidia", "phowhisper"],
-                        help="ASR backend engine (auto, nvidia, or phowhisper).")
-    parser.add_argument("--asr_model", type=str, default=None,
-                        help="ASR model HuggingFace ID or local path.")
+    parser.add_argument("--asr_engine", type=str, default="openai", choices=["openai", "whisper", "phowhisper", "nvidia", "auto"],
+                        help="ASR backend engine (openai, whisper, phowhisper, or nvidia).")
+    parser.add_argument("--asr_model", type=str, default="openai/whisper-large-v3-turbo",
+                        help="ASR model HuggingFace ID or local path (default: openai/whisper-large-v3-turbo).")
     parser.add_argument("--llm_model", type=str, default="Qwen/Qwen3-4B-Instruct-2507",
                         help="LLM model HuggingFace ID or local path (e.g. models/lifemate-qwen-sft or Qwen/Qwen3-4B-Instruct-2507).")
     parser.add_argument("--load_in_4bit", action="store_true",
