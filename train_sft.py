@@ -62,8 +62,8 @@ def parse_args():
                         help="LoRA rank (default: 32).")
     parser.add_argument("--lora_alpha", type=int, default=64,
                         help="LoRA alpha (default: 64).")
-    parser.add_argument("--max_seq_length", type=int, default=4096,
-                        help="Maximum sequence length (default: 4096).")
+    parser.add_argument("--max_seq_length", type=int, default=8192,
+                        help="Maximum sequence length (default: 8192 to cover 99%+ of complete tool calling trajectories).")
     parser.add_argument("--no_merge", action="store_true",
                         help="Skip merging LoRA into base model.")
     return parser.parse_args()
