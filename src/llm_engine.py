@@ -50,9 +50,9 @@ class LocalLLMEngine:
             or (len(model_name_or_path) > 1 and model_name_or_path[1] == ":")
         )
         if is_intended_local and not model_path.exists():
-            fallback_model = "Qwen/Qwen2.5-3B-Instruct"
+            fallback_model = "Qwen/Qwen3-4B-Instruct-2507"
             print(f"[LLM Warning] Local path '{model_name_or_path}' does not exist on disk!")
-            print(f"[LLM Fallback] Automatically falling back to base model '{fallback_model}'.")
+            print(f"[LLM Fallback] Automatically falling back to '{fallback_model}'.")
             model_name_or_path = fallback_model
             local_files_only = False
 
@@ -64,10 +64,16 @@ class LocalLLMEngine:
                 local_files_only=local_files_only
             )
         except Exception:
-            self.tokenizer = AutoTokenizer.from_pretrained(
-                model_name_or_path,
-                trust_remote_code=True
-            )
+            try:
+                self.tokenizer = AutoTokenizer.from_pretrained(
+                    model_name_or_path,
+                    trust_remote_code=True
+                )
+            except Exception:
+                fallback_25 = "Qwen/Qwen2.5-3B-Instruct"
+                print(f"[LLM Secondary Fallback] Loading tokenizer from {fallback_25}...")
+                model_name_or_path = fallback_25
+                self.tokenizer = AutoTokenizer.from_pretrained(fallback_25, trust_remote_code=True)
         if self.tokenizer.pad_token is None:
             self.tokenizer.pad_token = self.tokenizer.eos_token
 
@@ -129,7 +135,7 @@ class LocalLLMEngine:
         self,
         messages: List[Dict[str, Any]],
         tools: Optional[List[Dict[str, Any]]] = None,
-        max_new_tokens: int = 128
+        max_new_tokens: int = 384
     ) -> Dict[str, Any]:
         """Generate response and parsed tool calls using model chat template."""
         # Fix seeds for reproducibility

@@ -82,8 +82,8 @@ def parse_args():
                         help="ASR backend engine (auto, nvidia, or phowhisper).")
     parser.add_argument("--asr_model", type=str, default=None,
                         help="ASR model HuggingFace ID or local path.")
-    parser.add_argument("--llm_model", type=str, default="Qwen/Qwen2.5-3B-Instruct",
-                        help="LLM model HuggingFace ID or local path.")
+    parser.add_argument("--llm_model", type=str, default="Qwen/Qwen3-4B-Instruct-2507",
+                        help="LLM model HuggingFace ID or local path (e.g. models/lifemate-qwen-sft or Qwen/Qwen3-4B-Instruct-2507).")
     parser.add_argument("--load_in_4bit", action="store_true",
                         help="Load LLM with 4-bit NF4 quantization to save memory.")
     parser.add_argument("--max_steps", type=int, default=5,

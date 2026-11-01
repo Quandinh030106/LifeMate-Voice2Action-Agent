@@ -67,6 +67,10 @@ class LifeMateAgent:
         step_logs = []
 
         # 3. Interactive Agent Loop
+        profile = item.get("context", {}).get("user_profile", {})
+        work_addr = profile.get("work_address")
+        home_addr = profile.get("home_address")
+
         for step in range(self.max_steps):
             # Query LLM
             response = self.llm_generate_fn(messages, tools)
@@ -115,6 +119,25 @@ class LifeMateAgent:
                         }, ensure_ascii=False)
                     })
                     continue
+
+                # In-Context Entity Resolution Fallback for locations
+                for loc_key in ["pickup", "dropoff", "address", "location"]:
+                    if loc_key in targs and isinstance(targs[loc_key], str):
+                        val_clean = targs[loc_key].strip().lower()
+                        if val_clean in ["công ty", "văn phòng", "chỗ làm", "chỗ làm việc", "nơi làm việc", "cty"] and work_addr:
+                            targs[loc_key] = work_addr
+                        elif val_clean in ["nhà", "nhà riêng", "về nhà", "ở nhà"] and home_addr:
+                            targs[loc_key] = home_addr
+
+                # Schema safety for sys.ask_missing_info
+                if tname == "sys.ask_missing_info":
+                    if "params" not in targs or not isinstance(targs["params"], list):
+                        if "params" in targs and isinstance(targs["params"], str):
+                            targs["params"] = [targs["params"]]
+                        else:
+                            targs["params"] = []
+                    if "tool_name" not in targs or not isinstance(targs["tool_name"], str):
+                        targs["tool_name"] = "general"
 
                 # Execute in zaic_tools
                 exec_result = env.call(tname, targs)
