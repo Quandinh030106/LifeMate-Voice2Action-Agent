@@ -284,14 +284,14 @@ def main():
             fout.write(json.dumps(record, ensure_ascii=False) + "\n")
             fout.flush()
 
-            # Free VRAM after every sample to prevent accumulation and fragmentation
-            del tool_calls, state_hash, meta
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
-
             # Log progress with percentage
             pct = (total_processed / total_in_split) * 100
             print(f"[{total_processed:03d}/{total_in_split}] ({pct:5.1f}%) Sample: {sample_id} | Time: {elapsed:.2f}s | Calls: {len(tool_calls)} | Hash: {state_hash[:10]}...")
+
+            # Free VRAM after every sample to prevent accumulation and fragmentation
+            del record, tool_calls, state_hash, meta
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
 
     avg_time = total_time / total_processed if total_processed > 0 else 0.0
     print("\n" + "=" * 60)
