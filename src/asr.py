@@ -218,3 +218,11 @@ class VietnameseASR:
 
     def transcribe_batch(self, audio_paths: List[Union[str, Path]], batch_size: int = 16) -> List[str]:
         return self._impl.transcribe_batch(audio_paths, batch_size=batch_size)
+
+    def to_cpu(self):
+        """Move underlying model to CPU to prepare for GPU memory release."""
+        if hasattr(self, "_impl") and hasattr(self._impl, "model"):
+            try:
+                self._impl.model.cpu()
+            except Exception:
+                pass

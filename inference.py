@@ -194,9 +194,11 @@ def main():
                 pass
 
             # CRITICAL: Free ASR model from GPU VRAM completely before loading LLM!
-            if hasattr(asr, "engine") and hasattr(asr.engine, "model") and hasattr(asr.engine.model, "cpu"):
+            if hasattr(asr, "to_cpu"):
+                asr.to_cpu()
+            elif hasattr(asr, "_impl") and hasattr(asr._impl, "model") and hasattr(asr._impl.model, "cpu"):
                 try:
-                    asr.engine.model.cpu()
+                    asr._impl.model.cpu()
                 except Exception:
                     pass
             del asr
