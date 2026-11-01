@@ -68,6 +68,8 @@ class LocalLLMEngine:
                 model_name_or_path,
                 trust_remote_code=True
             )
+        if self.tokenizer.pad_token is None:
+            self.tokenizer.pad_token = self.tokenizer.eos_token
 
         model_kwargs = {
             "torch_dtype": self.dtype,
