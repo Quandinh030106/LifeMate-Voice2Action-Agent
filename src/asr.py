@@ -26,7 +26,7 @@ warnings.filterwarnings("ignore", message=".*suppress_tokens.*begin_suppress_tok
 
 
 def load_audio_file(audio_path: Union[str, Path], target_sr: int = 16000) -> np.ndarray:
-    """Load audio file and resample to 16kHz mono if needed."""
+    """Load audio file, resample to 16kHz mono, and normalize peak volume."""
     audio_path = Path(audio_path)
     if not audio_path.is_file():
         raise FileNotFoundError(f"Audio file not found: {audio_path}")
@@ -40,7 +40,14 @@ def load_audio_file(audio_path: Union[str, Path], target_sr: int = 16000) -> np.
         num_samples = int(len(speech) * target_sr / sr)
         speech = scipy.signal.resample(speech, num_samples)
 
-    return speech.astype(np.float32)
+    speech = speech.astype(np.float32)
+
+    # Normalize peak amplitude to prevent quiet audio from being skipped or hallucinated
+    max_val = np.max(np.abs(speech))
+    if max_val > 0.001:
+        speech = speech / max_val * 0.95
+
+    return speech
 
 
 class NvidiaParakeetASR:
@@ -99,7 +106,7 @@ class PhoWhisperASR:
 
     def __init__(
         self,
-        model_id: str = "vinai/PhoWhisper-small",
+        model_id: str = "vinai/PhoWhisper-medium",
         device: Optional[str] = None,
         torch_dtype: Optional[torch.dtype] = None
     ):
@@ -122,15 +129,28 @@ class PhoWhisperASR:
                 local_files_only=True,
             ).to(self.device)
         except Exception:
-            self.processor = AutoProcessor.from_pretrained(
-                model_id,
-                clean_up_tokenization_spaces=False,
-            )
-            self.model = AutoModelForSpeechSeq2Seq.from_pretrained(
-                model_id,
-                torch_dtype=self.dtype,
-                low_cpu_mem_usage=True,
-            ).to(self.device)
+            try:
+                self.processor = AutoProcessor.from_pretrained(
+                    model_id,
+                    clean_up_tokenization_spaces=False,
+                )
+                self.model = AutoModelForSpeechSeq2Seq.from_pretrained(
+                    model_id,
+                    torch_dtype=self.dtype,
+                    low_cpu_mem_usage=True,
+                ).to(self.device)
+            except Exception as e:
+                fallback_id = "vinai/PhoWhisper-small"
+                print(f"[ASR Warning] Could not load {model_id} ({e}). Falling back to {fallback_id}...")
+                self.processor = AutoProcessor.from_pretrained(
+                    fallback_id,
+                    clean_up_tokenization_spaces=False,
+                )
+                self.model = AutoModelForSpeechSeq2Seq.from_pretrained(
+                    fallback_id,
+                    torch_dtype=self.dtype,
+                    low_cpu_mem_usage=True,
+                ).to(self.device)
 
         if hasattr(self.model, "generation_config"):
             self.model.generation_config.max_length = None
@@ -209,7 +229,7 @@ class VietnameseASR:
                 print(f"[ASR] NeMo / NVIDIA model not available ({e}). Falling back to PhoWhisper.")
 
         if self._impl is None:
-            whisper_model = model_id or "vinai/PhoWhisper-small"
+            whisper_model = model_id or "vinai/PhoWhisper-medium"
             self._impl = PhoWhisperASR(model_id=whisper_model, device=self.device)
             self.engine_name = "phowhisper"
 

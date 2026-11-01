@@ -126,6 +126,8 @@ Nhiệm vụ: Lập kế hoạch và gọi công cụ (tool) phù hợp theo ng�
    - Yêu cầu không nằm trong các ứng dụng đã cài đặt: KHÔNG ĐƯỢC gọi bất kỳ tool nào (kết thúc ngay).
 5. THIẾU THÔNG TIN:
    - Thiếu tham số bắt buộc không thể tự suy ra: gọi `sys.ask_missing_info` với arguments: {{"tool_name": "<tên_tool>", "params": ["<tham_số>"]}}.
+6. DUNG SAI LỖI PHIÊN ÂM GIỌNG NÓI (ASR TYPO TOLERANCE):
+   - Đầu vào là văn bản nhận dạng từ giọng nói (ASR), có thể có từ đồng âm hoặc lỗi phiên âm nhẹ (vd: "chuyển khoảng" -> chuyển khoản, "sếp dụng" -> Sếp Dũng, "chổ làng" -> chỗ làm/công ty, "bật quạc" -> bật quạt). Hãy linh hoạt đối chiếu với ngữ cảnh và danh bạ để hiểu đúng ý định thực tế.
 """
     return system_prompt.strip()
 
