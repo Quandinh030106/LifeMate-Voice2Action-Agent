@@ -100,6 +100,8 @@ class LocalLLMEngine:
         else:
             if self.device == "cuda":
                 model_kwargs["device_map"] = "auto"
+                if torch.cuda.is_available() and torch.cuda.device_count() > 1:
+                    model_kwargs["max_memory"] = {i: "10GiB" for i in range(torch.cuda.device_count())}
             try:
                 self.model = AutoModelForCausalLM.from_pretrained(
                     model_name_or_path,
@@ -156,13 +158,15 @@ class LocalLLMEngine:
                 prompt_text += f"<|im_start|>{m['role']}\n{m.get('content', '')}<|im_end|>\n"
             prompt_text += "<|im_start|>assistant\n"
 
-        inputs = self.tokenizer(prompt_text, return_tensors="pt").to(self.device)
+        target_device = self.model.device if hasattr(self.model, "device") else self.device
+        inputs = self.tokenizer(prompt_text, return_tensors="pt").to(target_device)
 
-        # Truncate prompt if exceeding 16K tokens
-        if inputs.input_ids.shape[1] > 15000:
-            inputs["input_ids"] = inputs.input_ids[:, -15000:]
+        # Truncate prompt if exceeding safe budget for 15GB VRAM (3584 tokens max)
+        max_context = 3584
+        if inputs.input_ids.shape[1] > max_context:
+            inputs["input_ids"] = inputs.input_ids[:, -max_context:]
             if "attention_mask" in inputs:
-                inputs["attention_mask"] = inputs.attention_mask[:, -15000:]
+                inputs["attention_mask"] = inputs.attention_mask[:, -max_context:]
 
         generated_ids = self.model.generate(
             **inputs,
@@ -180,6 +184,8 @@ class LocalLLMEngine:
 
         # Parse tool calls
         tool_calls = parse_tool_calls_from_text(output_text)
+
+        del inputs, generated_ids
 
         return {
             "content": output_text,

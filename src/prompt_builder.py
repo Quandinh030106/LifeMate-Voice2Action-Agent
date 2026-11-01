@@ -150,8 +150,12 @@ def build_messages(
         {"role": "system", "content": build_system_prompt(item)}
     ]
 
-    # Process conversation history if present
-    for turn in item.get("history", []):
+    # Process conversation history if present (sliding window: max 6 recent turns)
+    history = item.get("history", [])
+    if len(history) > 6:
+        history = history[-6:]
+
+    for turn in history:
         role = turn.get("role")
         if role == "user":
             user_content = turn.get("audio_text") or turn.get("text") or "[Yêu cầu người dùng trước đó]"
@@ -177,10 +181,13 @@ def build_messages(
             # Tool results if present
             if "tool_results" in turn and "tool_calls" in turn:
                 for tc, res in zip(turn["tool_calls"], turn["tool_results"]):
+                    res_str = json.dumps(res, ensure_ascii=False)
+                    if len(res_str) > 800:
+                        res_str = res_str[:800] + "... [kết quả dài đã rút gọn]"
                     messages.append({
                         "role": "tool",
                         "name": tc["name"],
-                        "content": json.dumps(res, ensure_ascii=False)
+                        "content": res_str
                     })
 
     # Add the current user request

@@ -59,6 +59,7 @@ class LifeMateAgent:
 
         # 1. Filter tools available for this specific sample
         tools = extract_available_tools(item, self.catalog)
+        allowed_tool_names = set(t["function"]["name"] for t in tools)
 
         # 2. Build initial conversation prompt
         messages = build_messages(item, self.catalog, user_request_text=user_request_text)
@@ -103,6 +104,17 @@ class LifeMateAgent:
             for tc in tool_calls:
                 tname = tc["name"]
                 targs = tc.get("arguments") or {}
+
+                # CRITICAL: Validate against allowed tools to prevent illegal tools from corrupting submission
+                if tname not in allowed_tool_names:
+                    messages.append({
+                        "role": "tool",
+                        "name": tname,
+                        "content": json.dumps({
+                            "error": f"Tool '{tname}' không tồn tại trong danh sách ứng dụng đã cài đặt. Chỉ được gọi các tool: {sorted(list(allowed_tool_names))}"
+                        }, ensure_ascii=False)
+                    })
+                    continue
 
                 # Execute in zaic_tools
                 exec_result = env.call(tname, targs)

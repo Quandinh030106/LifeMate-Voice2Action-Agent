@@ -15,6 +15,7 @@ import functools
 import io
 import json
 import os
+os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 import random
 import sys
 import time
@@ -83,6 +84,8 @@ def parse_args():
                         help="ASR model HuggingFace ID or local path.")
     parser.add_argument("--llm_model", type=str, default="Qwen/Qwen2.5-3B-Instruct",
                         help="LLM model HuggingFace ID or local path.")
+    parser.add_argument("--load_in_4bit", action="store_true",
+                        help="Load LLM with 4-bit NF4 quantization to save memory.")
     parser.add_argument("--max_steps", type=int, default=5,
                         help="Max agent reasoning steps per sample.")
     return parser.parse_args()
@@ -191,16 +194,22 @@ def main():
                 pass
 
             # CRITICAL: Free ASR model from GPU VRAM completely before loading LLM!
+            if hasattr(asr, "engine") and hasattr(asr.engine, "model") and hasattr(asr.engine.model, "cpu"):
+                try:
+                    asr.engine.model.cpu()
+                except Exception:
+                    pass
             del asr
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
             import gc
             gc.collect()
+            gc.collect()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
             print("Freed ASR model from GPU VRAM to maximize memory for LLM.")
 
     # 3. Stage 2: Load LLM with 100% Free VRAM Headroom
-    print(f"Loading LLM model: {args.llm_model}...")
-    llm = LocalLLMEngine(model_name_or_path=args.llm_model, device=device)
+    print(f"Loading LLM model: {args.llm_model} (4bit={args.load_in_4bit})...")
+    llm = LocalLLMEngine(model_name_or_path=args.llm_model, device=device, load_in_4bit=args.load_in_4bit)
 
     catalog = json.load(open(catalog_path, encoding="utf-8"))
 
@@ -272,6 +281,11 @@ def main():
 
             fout.write(json.dumps(record, ensure_ascii=False) + "\n")
             fout.flush()
+
+            # Free VRAM after every sample to prevent accumulation and fragmentation
+            del tool_calls, state_hash, meta
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
 
             # Log progress with percentage
             pct = (total_processed / total_in_split) * 100
