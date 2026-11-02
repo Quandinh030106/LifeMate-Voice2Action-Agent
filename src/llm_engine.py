@@ -135,7 +135,7 @@ class LocalLLMEngine:
         self,
         messages: List[Dict[str, Any]],
         tools: Optional[List[Dict[str, Any]]] = None,
-        max_new_tokens: int = 384
+        max_new_tokens: int = 256
     ) -> Dict[str, Any]:
         """Generate response and parsed tool calls using model chat template."""
         # Fix seeds for reproducibility
@@ -167,22 +167,36 @@ class LocalLLMEngine:
         target_device = self.model.device if hasattr(self.model, "device") else self.device
         inputs = self.tokenizer(prompt_text, return_tensors="pt").to(target_device)
 
-        # Truncate prompt if exceeding safe budget for 15GB VRAM (3584 tokens max)
-        max_context = 3584
+        # Full 8192 context budget matching training length to guarantee 100% tool visibility
+        max_context = 8192
         if inputs.input_ids.shape[1] > max_context:
             inputs["input_ids"] = inputs.input_ids[:, -max_context:]
             if "attention_mask" in inputs:
                 inputs["attention_mask"] = inputs.attention_mask[:, -max_context:]
 
-        generated_ids = self.model.generate(
-            **inputs,
-            max_new_tokens=max_new_tokens,
-            do_sample=False,
-            temperature=None,
-            top_p=None,
-            eos_token_id=self.stop_token_ids,
-            pad_token_id=self.tokenizer.eos_token_id
-        )
+        # Fast early-stopping on </tool_call> and <|im_end|> to prevent trailing chatter
+        gen_kwargs = {
+            "max_new_tokens": max_new_tokens,
+            "do_sample": False,
+            "temperature": None,
+            "top_p": None,
+            "pad_token_id": self.tokenizer.eos_token_id,
+        }
+
+        try:
+            generated_ids = self.model.generate(
+                **inputs,
+                stop_strings=["</tool_call>", "<|im_end|>"],
+                tokenizer=self.tokenizer,
+                **gen_kwargs
+            )
+        except (TypeError, ValueError):
+            # Fallback for transformers versions without stop_strings support
+            gen_kwargs["eos_token_id"] = self.stop_token_ids
+            generated_ids = self.model.generate(
+                **inputs,
+                **gen_kwargs
+            )
 
         # Extract only new generated tokens
         new_tokens = generated_ids[0][inputs.input_ids.shape[1]:]
