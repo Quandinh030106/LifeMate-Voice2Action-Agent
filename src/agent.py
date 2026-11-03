@@ -67,28 +67,6 @@ class LifeMateAgent:
         step_logs = []
         executed_call_signatures = set()
 
-        # Common single-turn write tools that conclude the user request once executed
-        SINGLE_WRITE_TOOLS = {
-            "ride_hailing.book", "ride_hailing.cancel",
-            "banking.transfer", "banking.open_savings",
-            "ewallet.transfer", "ewallet.topup_mobile", "ewallet.pay_qr",
-            "alarm.create", "alarm.update", "alarm.delete",
-            "reminders.create", "reminders.complete", "reminders.delete",
-            "sms.send", "phone.call",
-            "chat_ott.call", "chat_ott.send_message",
-            "smart_home.light_set", "smart_home.fan_set", "smart_home.climate_set",
-            "smart_home.switch_set", "smart_home.scene_run",
-            "tv.control", "tv.tune",
-            "bill_payment.schedule_autopay", "bill_payment.pay",
-            "calendar.cancel_event", "calendar.create_event", "calendar.update_event"
-        }
-
-        # Informational read-only tools
-        PURE_SEARCH_TOOLS = {
-            "flights.search", "weather.get_current", "weather.get_forecast",
-            "gold_price.get_price", "fuel_price.get_price"
-        }
-
         for step in range(self.max_steps):
             # Query LLM
             response = self.llm_generate_fn(messages, tools)
@@ -136,40 +114,7 @@ class LifeMateAgent:
                     })
                     continue
 
-                # In-Context Entity Resolution Fallback for locations
-                for loc_key in ["pickup", "dropoff", "address", "location"]:
-                    if loc_key in targs and isinstance(targs[loc_key], str):
-                        val_clean = targs[loc_key].strip().lower()
-                        if val_clean in ["công ty", "văn phòng", "chỗ làm", "chỗ làm việc", "nơi làm việc", "cty"] and work_addr:
-                            targs[loc_key] = work_addr
-                        elif val_clean in ["nhà", "nhà riêng", "về nhà", "ở nhà"] and home_addr:
-                            targs[loc_key] = home_addr
-
-                # In-Context Entity Resolution for banking.transfer
-                if tname == "banking.transfer":
-                    from_acc = str(targs.get("from_account_id", ""))
-                    ben_id = str(targs.get("beneficiary_id", ""))
-                    if "1234" in from_acc or "1234" in ben_id or "account_" in from_acc or "beneficiary_" in ben_id or not from_acc or not ben_id:
-                        if "banking.get_balance" in allowed_tool_names and ("banking.get_balance", "{}") not in executed_call_signatures:
-                            bal_res = env.call("banking.get_balance", {})
-                            executed_call_signatures.add(("banking.get_balance", "{}"))
-                            messages.append({"role": "tool", "name": "banking.get_balance", "content": json.dumps(bal_res, ensure_ascii=False)})
-                            if bal_res.get("ok") and bal_res.get("accounts"):
-                                targs["from_account_id"] = bal_res["accounts"][0]["id"]
-                        if "banking.list_beneficiaries" in allowed_tool_names and ("banking.list_beneficiaries", "{}") not in executed_call_signatures:
-                            ben_res = env.call("banking.list_beneficiaries", {})
-                            executed_call_signatures.add(("banking.list_beneficiaries", "{}"))
-                            messages.append({"role": "tool", "name": "banking.list_beneficiaries", "content": json.dumps(ben_res, ensure_ascii=False)})
-                            if ben_res.get("ok") and ben_res.get("beneficiaries"):
-                                note_context = (str(targs.get("note", "")) + " " + str(user_request_text or "")).lower()
-                                matched_ben = None
-                                for b in ben_res["beneficiaries"]:
-                                    if b.get("name", "").lower() in note_context:
-                                        matched_ben = b["id"]
-                                        break
-                                targs["beneficiary_id"] = matched_ben if matched_ben else ben_res["beneficiaries"][0]["id"]
-
-                # Deduplication check: Break infinite ReAct loop if model emits identical call
+                # Deduplication check: Break loop if model repeats identical call
                 call_sig = (tname, json.dumps(targs, sort_keys=True, ensure_ascii=False))
                 if call_sig in executed_call_signatures:
                     stop_loop = True
@@ -200,13 +145,6 @@ class LifeMateAgent:
                 if tname == "sys.ask_missing_info":
                     stop_loop = True
                     break
-
-                # Pure search tool early stopping if query is purely informational
-                if tname in PURE_SEARCH_TOOLS:
-                    req_lower = (user_request_text or "").lower()
-                    action_keywords = ["đặt", "book", "mua", "chuyển", "báo", "hẹn", "lịch", "bật", "tắt"]
-                    if not any(k in req_lower for k in action_keywords):
-                        stop_loop = True
 
             if stop_loop:
                 break
