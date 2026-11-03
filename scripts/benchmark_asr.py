@@ -369,25 +369,30 @@ class WhisperTurboRunner:
 
 # ── Main Benchmark Engine ──────────────────────────────────────────────────────
 def locate_train_data(hint_dir: Optional[str] = None) -> Tuple[Path, Path]:
-    candidates = []
     if hint_dir:
-        candidates.append(Path(hint_dir))
-    candidates.extend([
-        Path("/kaggle/input/lifemate-data/train+public_test/train+public_test"),
-        Path("LifeMate Agentic AI/data/train+public_test/train+public_test"),
-        Path("data/train+public_test/train+public_test"),
-    ])
-    for cand in candidates:
-        train_file = cand / "train" / "train.jsonl"
-        if train_file.is_file():
-            return train_file.resolve(), (cand / "train").resolve()
+        p = Path(hint_dir)
+        if (p / "train.jsonl").is_file():
+            return (p / "train.jsonl").resolve(), p.resolve()
+        if (p / "train" / "train.jsonl").is_file():
+            return (p / "train" / "train.jsonl").resolve(), (p / "train").resolve()
 
-    found = glob.glob("**/train.jsonl", recursive=True)
-    if found:
-        tf = Path(found[0]).resolve()
-        return tf, tf.parent
+    # Automatic recursive search across all /kaggle/input datasets and local directories
+    search_patterns = [
+        "/kaggle/input/**/train/train.jsonl",
+        "/kaggle/input/**/train.jsonl",
+        "**/train+public_test/**/train/train.jsonl",
+        "**/train+public_test/**/train.jsonl",
+        "**/train/train.jsonl",
+        "**/train.jsonl"
+    ]
+    for pat in search_patterns:
+        matches = glob.glob(pat, recursive=True)
+        for m in matches:
+            mf = Path(m).resolve()
+            if mf.is_file():
+                return mf, mf.parent
 
-    raise FileNotFoundError("Could not locate train.jsonl dataset!")
+    raise FileNotFoundError("Could not locate train.jsonl dataset in /kaggle/input or local directory!")
 
 
 def run_benchmark():
