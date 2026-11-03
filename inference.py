@@ -78,10 +78,12 @@ def parse_args():
                         help="Skip ASR and use audio_text directly (debugging/training only).")
     parser.add_argument("--limit", type=int, default=None,
                         help="Limit number of samples to process (for testing).")
-    parser.add_argument("--asr_engine", type=str, default="openai", choices=["openai", "whisper", "phowhisper", "nvidia", "auto"],
-                        help="ASR backend engine (openai, whisper, phowhisper, or nvidia).")
-    parser.add_argument("--asr_model", type=str, default="openai/whisper-large-v3-turbo",
-                        help="ASR model HuggingFace ID or local path (default: openai/whisper-large-v3-turbo).")
+    parser.add_argument("--asr_engine", type=str, default="phowhisper", choices=["openai", "whisper", "phowhisper", "nvidia", "auto"],
+                        help="ASR backend engine (default: phowhisper).")
+    parser.add_argument("--asr_model", type=str, default="vinai/PhoWhisper-large",
+                        help="ASR model HuggingFace ID or local path (default: vinai/PhoWhisper-large).")
+    parser.add_argument("--recompute_transcripts", action="store_true",
+                        help="Force recomputing audio transcripts even if cached transcripts file exists.")
     parser.add_argument("--llm_model", type=str, default="Qwen/Qwen3-4B-Instruct-2507",
                         help="LLM model HuggingFace ID or local path (e.g. models/lifemate-qwen-sft or Qwen/Qwen3-4B-Instruct-2507).")
     parser.add_argument("--load_in_4bit", action="store_true",
@@ -134,7 +136,14 @@ def main():
     audio_transcripts = {}
     transcripts_cache_file = output_path.parent / f"transcripts_{args.split}.json"
 
-    if transcripts_cache_file.is_file():
+    if args.recompute_transcripts and transcripts_cache_file.is_file():
+        try:
+            transcripts_cache_file.unlink()
+            print(f"Removed stale transcripts cache: {transcripts_cache_file}")
+        except Exception:
+            pass
+
+    if not args.recompute_transcripts and transcripts_cache_file.is_file():
         try:
             with open(transcripts_cache_file, "r", encoding="utf-8") as f_tr:
                 audio_transcripts = json.load(f_tr)

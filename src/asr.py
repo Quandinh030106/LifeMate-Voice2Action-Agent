@@ -102,125 +102,100 @@ class NvidiaParakeetASR:
 
 
 class PhoWhisperASR:
-    """Wrapper for OpenAI Whisper & PhoWhisper sequence-to-sequence ASR models.
-    Provides neutral, un-biased, high-accuracy Vietnamese speech transcription.
+    """Wrapper for PhoWhisper & Whisper sequence-to-sequence ASR models.
+    Uses HuggingFace pipeline for optimal decoding, chunking, and highest Vietnamese accuracy.
     """
 
     def __init__(
         self,
-        model_id: str = "openai/whisper-large-v3-turbo",
+        model_id: str = "vinai/PhoWhisper-large",
         device: Optional[str] = None,
         torch_dtype: Optional[torch.dtype] = None
     ):
-        from transformers import AutoModelForSpeechSeq2Seq, AutoProcessor
+        from transformers import pipeline
 
         self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
-        self.dtype = torch_dtype or (torch.float16 if self.device == "cuda" else torch.float32)
+        self.dtype = torch_dtype or (torch.float16 if self.device.startswith("cuda") else torch.float32)
+        device_idx = 0 if self.device.startswith("cuda") else -1
 
-        print(f"Loading Whisper/PhoWhisper ASR ({model_id}) on {self.device} ({self.dtype})...")
+        print(f"Loading Vietnamese PhoWhisper ASR ({model_id}) on {self.device} ({self.dtype})...")
         try:
-            self.processor = AutoProcessor.from_pretrained(
-                model_id,
-                local_files_only=True,
-                clean_up_tokenization_spaces=False,
-            )
-            self.model = AutoModelForSpeechSeq2Seq.from_pretrained(
-                model_id,
+            self.pipe = pipeline(
+                "automatic-speech-recognition",
+                model=model_id,
                 torch_dtype=self.dtype,
-                low_cpu_mem_usage=True,
-                local_files_only=True,
-            ).to(self.device)
-        except Exception:
-            try:
-                self.processor = AutoProcessor.from_pretrained(
-                    model_id,
-                    clean_up_tokenization_spaces=False,
-                )
-                self.model = AutoModelForSpeechSeq2Seq.from_pretrained(
-                    model_id,
-                    torch_dtype=self.dtype,
-                    low_cpu_mem_usage=True,
-                ).to(self.device)
-            except Exception as e:
-                fallback_id = "vinai/PhoWhisper-medium"
-                print(f"[ASR Warning] Could not load {model_id} ({e}). Falling back to {fallback_id}...")
-                self.processor = AutoProcessor.from_pretrained(
-                    fallback_id,
-                    clean_up_tokenization_spaces=False,
-                )
-                self.model = AutoModelForSpeechSeq2Seq.from_pretrained(
-                    fallback_id,
-                    torch_dtype=self.dtype,
-                    low_cpu_mem_usage=True,
-                ).to(self.device)
+                device=device_idx,
+                model_kwargs={"low_cpu_mem_usage": True}
+            )
+        except Exception as e:
+            fallback = "vinai/PhoWhisper-medium"
+            print(f"[ASR Warning] Could not load {model_id} ({e}). Falling back to {fallback}...")
+            self.pipe = pipeline(
+                "automatic-speech-recognition",
+                model=fallback,
+                torch_dtype=self.dtype,
+                device=device_idx,
+                model_kwargs={"low_cpu_mem_usage": True}
+            )
 
-        if hasattr(self.model, "generation_config"):
-            self.model.generation_config.max_length = None
-            self.model.generation_config.forced_decoder_ids = None
+        self.model = self.pipe.model
 
-        self.model.eval()
-
-    @torch.inference_mode()
     def transcribe(
         self,
         audio: Union[str, Path, np.ndarray],
         language: str = "vi"
     ) -> str:
-        """Transcribe audio to Vietnamese text deterministically."""
+        """Transcribe audio to Vietnamese text."""
         if isinstance(audio, (str, Path)):
-            speech = load_audio_file(audio)
+            audio_input = str(Path(audio).resolve())
         else:
-            speech = audio
+            audio_input = {"raw": audio, "sampling_rate": 16000}
 
-        inputs = self.processor(
-            speech,
-            sampling_rate=16000,
-            return_tensors="pt"
-        )
-        input_features = inputs.input_features.to(self.device, dtype=self.dtype)
-
-        predicted_ids = self.model.generate(
-            input_features,
-            task="transcribe",
-            language=language,
-            do_sample=False,
-            num_beams=1,
-            max_new_tokens=256,
-        )
-
-        transcription = self.processor.batch_decode(
-            predicted_ids,
-            skip_special_tokens=True,
-        )[0]
-
-        return transcription.strip()
+        res = self.pipe(audio_input, return_timestamps=False)
+        text = res["text"] if isinstance(res, dict) else str(res)
+        return text.strip()
 
     def transcribe_batch(
         self,
         audio_paths: List[Union[str, Path]],
-        batch_size: int = 8
+        batch_size: int = 16
     ) -> List[str]:
-        """Transcribe audio files sequentially or in small batches."""
-        return [self.transcribe(p) for p in audio_paths]
+        """Transcribe a batch of audio files using the pipeline."""
+        str_paths = [str(Path(p).resolve()) for p in audio_paths]
+        results = self.pipe(str_paths, batch_size=batch_size, return_timestamps=False)
+        return [r["text"].strip() if isinstance(r, dict) else str(r).strip() for r in results]
+
+    def to_cpu(self):
+        """Move underlying model to CPU to release GPU memory."""
+        if hasattr(self, "pipe") and hasattr(self.pipe, "model"):
+            try:
+                self.pipe.model.cpu()
+            except Exception:
+                pass
 
 
 class VietnameseASR:
-    """Unified factory wrapper supporting both NVIDIA Parakeet and PhoWhisper/Whisper."""
+    """Unified factory wrapper defaulting to state-of-the-art VinAI PhoWhisper."""
 
     def __init__(
         self,
-        engine: str = "auto",
+        engine: str = "phowhisper",
         model_id: Optional[str] = None,
         device: Optional[str] = None
     ):
         """
-        engine: "openai" / "whisper" (Whisper Large-v3-turbo), "phowhisper" (PhoWhisper), "nvidia" (Parakeet), or "auto" (default: openai).
+        engine: "phowhisper" (VinAI PhoWhisper, default), "openai" (Whisper), "nvidia" (Parakeet-CTC).
         """
         self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
         self.engine_name = engine
         self._impl = None
 
-        if engine in ("auto", "openai", "whisper"):
+        if engine in ("auto", "phowhisper"):
+            default_model = model_id or "vinai/PhoWhisper-large"
+            self._impl = PhoWhisperASR(model_id=default_model, device=self.device)
+            self.engine_name = "phowhisper"
+
+        elif engine in ("openai", "whisper"):
             default_model = model_id or "openai/whisper-large-v3-turbo"
             self._impl = PhoWhisperASR(model_id=default_model, device=self.device)
             self.engine_name = "openai"
@@ -230,15 +205,10 @@ class VietnameseASR:
             self._impl = NvidiaParakeetASR(model_name=nvidia_model, device=self.device)
             self.engine_name = "nvidia"
 
-        elif engine == "phowhisper":
-            whisper_model = model_id or "vinai/PhoWhisper-medium"
-            self._impl = PhoWhisperASR(model_id=whisper_model, device=self.device)
-            self.engine_name = "phowhisper"
-
         if self._impl is None:
-            default_model = model_id or "openai/whisper-large-v3-turbo"
+            default_model = model_id or "vinai/PhoWhisper-large"
             self._impl = PhoWhisperASR(model_id=default_model, device=self.device)
-            self.engine_name = "openai"
+            self.engine_name = "phowhisper"
 
     def transcribe(self, audio: Union[str, Path, np.ndarray]) -> str:
         return self._impl.transcribe(audio)
