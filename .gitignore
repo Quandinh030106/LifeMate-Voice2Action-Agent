@@ -12,6 +12,7 @@ models/
 
 # Results & Local logs
 result/*.jsonl
+result/*.json
 !result/.gitkeep
 *.log
 .DS_Store
