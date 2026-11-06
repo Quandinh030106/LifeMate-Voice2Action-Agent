@@ -78,14 +78,14 @@ def parse_args():
                         help="Skip ASR and use audio_text directly (debugging/training only).")
     parser.add_argument("--limit", type=int, default=None,
                         help="Limit number of samples to process (for testing).")
-    parser.add_argument("--asr_engine", type=str, default="phowhisper", choices=["openai", "whisper", "phowhisper", "nvidia", "auto"],
-                        help="ASR backend engine (default: phowhisper).")
-    parser.add_argument("--asr_model", type=str, default="vinai/PhoWhisper-large",
-                        help="ASR model HuggingFace ID or local path (default: vinai/PhoWhisper-large).")
+    parser.add_argument("--asr_engine", type=str, default="gipformer", choices=["gipformer", "phowhisper", "openai", "whisper", "nvidia", "auto"],
+                        help="ASR backend engine (default: gipformer on CPU).")
+    parser.add_argument("--asr_model", type=str, default="g-group-ai-lab/gipformer1.5-68M-rnnt",
+                        help="ASR model HuggingFace ID or local path (default: g-group-ai-lab/gipformer1.5-68M-rnnt).")
     parser.add_argument("--recompute_transcripts", action="store_true",
                         help="Force recomputing audio transcripts even if cached transcripts file exists.")
-    parser.add_argument("--llm_model", type=str, default="Qwen/Qwen3-4B-Instruct-2507",
-                        help="LLM model HuggingFace ID or local path (e.g. models/lifemate-qwen-sft or Qwen/Qwen3-4B-Instruct-2507).")
+    parser.add_argument("--llm_model", type=str, default="models/lifemate-adaptive-qwen",
+                        help="LLM model HuggingFace ID or local path (default: models/lifemate-adaptive-qwen or Qwen/Qwen2.5-3B-Instruct).")
     parser.add_argument("--load_in_4bit", action="store_true",
                         help="Load LLM with 4-bit NF4 quantization to save memory.")
     parser.add_argument("--max_steps", type=int, default=5,

@@ -1,10 +1,12 @@
 """Interactive ReAct Agent loop for LifeMate.
-Coordinates between LLM planning and zaic_tools execution environment.
+Coordinates between LLM planning, Skill Knowledge Graph, and zaic_tools execution environment.
 Strictly abides by competition rules:
 - Only one ToolEnv per sample.
 - Tracks all executed calls and retrieves state_hash.
+- Dynamic Skill Graph pruning (removes distractor domains, keeps prerequisites).
 - Handles multi-step read-before-write logic.
 - Detects out-of-scope requests and missing info requests.
+- Zero hardcoding.
 """
 from __future__ import annotations
 
@@ -15,16 +17,18 @@ from .prompt_builder import (
     extract_available_tools,
     build_messages,
 )
+from .skill_graph import SkillGraph
 
 
 class LifeMateAgent:
-    """Agent that manages the reasoning loop for one sample."""
+    """Agent that manages the reasoning loop for one sample with Adaptive Skill Graph."""
 
     def __init__(
         self,
         llm_generate_fn: Callable[[List[Dict[str, Any]], List[Dict[str, Any]]], Dict[str, Any]],
         catalog: Dict[str, Any],
         max_steps: int = 5,
+        skill_graph: Optional[SkillGraph] = None,
     ):
         """
         Args:
@@ -35,10 +39,12 @@ class LifeMateAgent:
                 }
             catalog: Catalog dictionary of apps and tools.
             max_steps: Maximum reasoning / action steps per sample (to respect <= 30s timeout).
+            skill_graph: Optional pre-initialized SkillGraph.
         """
         self.llm_generate_fn = llm_generate_fn
         self.catalog = catalog
         self.max_steps = max_steps
+        self.skill_graph = skill_graph or SkillGraph(catalog)
 
     def run_sample(
         self,
@@ -57,11 +63,19 @@ class LifeMateAgent:
         # Exactly one ToolEnv per sample loaded from local environment
         env = ToolEnv(split, sample_id, root=data_root)
 
-        # 1. Filter tools available for this specific sample
-        tools = extract_available_tools(item, self.catalog)
+        # 1. Extract tools allowed for this specific sample
+        raw_tools = extract_available_tools(item, self.catalog)
+
+        # 2. Adaptive Skill Graph Pruning:
+        # Removes completely irrelevant distractor domains while preserving prerequisite read tools
+        tools = self.skill_graph.filter_tools_for_request(
+            query=user_request_text or "",
+            installed_tool_schemas=raw_tools,
+            max_tools=20
+        )
         allowed_tool_names = set(t["function"]["name"] for t in tools)
 
-        # 2. Build initial conversation prompt
+        # 3. Build initial conversation prompt
         messages = build_messages(item, self.catalog, user_request_text=user_request_text)
 
         step_logs = []
@@ -70,7 +84,7 @@ class LifeMateAgent:
         for step in range(self.max_steps):
             # Query LLM
             response = self.llm_generate_fn(messages, tools)
-            content = response.get("content")
+            content = response.get("content") or ""
             tool_calls = response.get("tool_calls") or []
 
             step_logs.append({
@@ -83,8 +97,11 @@ class LifeMateAgent:
             if not tool_calls:
                 break
 
-            # Add assistant message to history (keep content empty when tool_calls are present to avoid prompt duplication)
-            assistant_turn: Dict[str, Any] = {"role": "assistant", "content": ""}
+            # Add assistant message to history
+            assistant_turn: Dict[str, Any] = {
+                "role": "assistant",
+                "content": content
+            }
             assistant_turn["tool_calls"] = [
                 {
                     "type": "function",
