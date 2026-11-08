@@ -67,8 +67,25 @@ def main():
     print(f"Saving merged standalone model to {out_path}...")
     merged_model.save_pretrained(str(out_path))
 
-    tokenizer = AutoTokenizer.from_pretrained(args.base_model, trust_remote_code=True)
+    # Prefer tokenizer from LoRA dir if it contains custom tokens/templates
+    tokenizer = None
+    try:
+        print(f"Loading tokenizer from LoRA dir: {args.lora_dir}...")
+        tokenizer = AutoTokenizer.from_pretrained(args.lora_dir, trust_remote_code=True)
+    except Exception as e:
+        print(f"Could not load tokenizer from LoRA dir ({e}). Fallback to base model: {args.base_model}...")
+        tokenizer = AutoTokenizer.from_pretrained(args.base_model, trust_remote_code=True)
+
     tokenizer.save_pretrained(str(out_path))
+
+    # Also copy chat_template.jinja or extra config files from lora_dir if present
+    import shutil
+    for fname in ["chat_template.jinja", "added_tokens.json", "special_tokens_map.json"]:
+        src_f = Path(args.lora_dir) / fname
+        if src_f.is_file():
+            dst_f = out_path / fname
+            shutil.copy(str(src_f), str(dst_f))
+            print(f"Copied {fname} to merged model directory.")
 
     del base_model, peft_model, merged_model
     gc.collect()

@@ -41,6 +41,7 @@ def find_data_root(hint: str | None = None) -> Path:
         candidates.append(Path(hint))
     candidates.extend([
         Path("/kaggle/input/lifemate-data/train+public_test/train+public_test"),
+        Path("/kaggle/input/datasets/locvt06/zaic2026-track-lifemate"),
         Path("LifeMate Agentic AI/data/train+public_test/train+public_test"),
         Path("data/train+public_test/train+public_test"),
     ])
@@ -49,7 +50,7 @@ def find_data_root(hint: str | None = None) -> Path:
         if (cand / "public_test" / "public_test.jsonl").is_file():
             return cand.resolve()
 
-    found = glob.glob("**/public_test.jsonl", recursive=True)
+    found = glob.glob("/kaggle/input/**/public_test.jsonl", recursive=True) + glob.glob("**/public_test.jsonl", recursive=True)
     if found:
         return Path(found[0]).resolve().parent.parent
 

@@ -73,7 +73,8 @@ class LifeMateAgent:
             installed_tool_schemas=raw_tools,
             max_tools=20
         )
-        allowed_tool_names = set(t["function"]["name"] for t in tools)
+        # Device-level safety: all installed tools are legitimate to execute
+        allowed_tool_names = set(t["function"]["name"] for t in raw_tools)
 
         # 3. Build initial conversation prompt
         messages = build_messages(item, self.catalog, user_request_text=user_request_text)

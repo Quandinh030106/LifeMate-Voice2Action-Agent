@@ -4,7 +4,11 @@ import json
 from pathlib import Path
 
 # Fix Windows console UTF-8 output
-sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
+try:
+    if hasattr(sys.stdout, "buffer"):
+        sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
+except Exception:
+    pass
 
 # Setup paths
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
