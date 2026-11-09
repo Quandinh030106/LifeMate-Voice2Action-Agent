@@ -67,16 +67,13 @@ class LifeMateAgent:
         raw_tools = extract_available_tools(item, self.catalog)
 
         # 2. Skill Graph tool set:
-        # Provide all installed tools on the device (avg 30 tools) so model has complete visibility
-        # without hardcoded keyword pruning throwing away relevant tools!
-        if len(raw_tools) > 60:
-            tools = self.skill_graph.filter_tools_for_request(
-                query=user_request_text or "",
-                installed_tool_schemas=raw_tools,
-                max_tools=45
-            )
-        else:
-            tools = raw_tools
+        # Provide tools via intelligent group-aligned filtering to keep token length safe (~2,000 tokens)
+        # and prevent CUDA OutOfMemory spikes on Kaggle GPU T4!
+        tools = self.skill_graph.filter_tools_for_request(
+            query=user_request_text or "",
+            installed_tool_schemas=raw_tools,
+            max_tools=22
+        )
 
         # Device-level safety: all installed tools are legitimate to execute
         allowed_tool_names = set(t["function"]["name"] for t in raw_tools)

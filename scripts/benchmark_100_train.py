@@ -155,19 +155,54 @@ def main():
     with open(catalog_file, "r", encoding="utf-8") as f:
         catalog = json.load(f)
 
-    # 1. Initialize ASR if audio enabled
-    asr = None
-    if not args.no_audio:
-        print(f"\n[1/3] Loading ASR Engine ({args.asr_engine})...")
-        asr = VietnameseASR(engine=args.asr_engine)
+    # Read items to process
+    items_to_process = []
+    with open(train_file, "r", encoding="utf-8") as fin:
+        for idx, line in enumerate(fin):
+            if idx >= args.limit:
+                break
+            if line.strip():
+                items_to_process.append(json.loads(line))
 
-    # 2. Initialize LLM
-    print(f"\n[2/3] Loading LLM Planner ({args.llm_model})...")
+    # Phase 1: Transcribe audio upfront with ASR and completely free VRAM
+    audio_transcripts: Dict[str, str] = {}
+    if not args.no_audio:
+        import gc
+        import torch
+        print(f"\n[1/3] Phase 1: Transcribing audio with ASR ({args.asr_engine})...")
+        # If Kaggle has GPU 1 available, use GPU 1 for ASR, else GPU 0 or CPU
+        asr_device = "cuda:1" if (torch.cuda.is_available() and torch.cuda.device_count() > 1) else ("cuda:0" if torch.cuda.is_available() else "cpu")
+        asr = VietnameseASR(engine=args.asr_engine, device=asr_device)
+
+        audio_files = []
+        for it in items_to_process:
+            if "audio" in it:
+                audio_files.append((it["audio"], split_dir / it["audio"]))
+
+        print(f"Transcribing {len(audio_files)} audio recordings on {asr_device}...")
+        t_asr_start = time.time()
+        for rel_p, full_p in audio_files:
+            if full_p.is_file():
+                try:
+                    audio_transcripts[rel_p] = asr.transcribe(full_p)
+                except Exception as e:
+                    print(f"ASR error on {rel_p}: {e}")
+        print(f"Transcribed {len(audio_transcripts)} recordings in {time.time() - t_asr_start:.2f}s.")
+
+        # Completely free ASR from VRAM so LLM has 100% dedicated memory
+        del asr
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        gc.collect()
+        print("✅ ASR unloaded from VRAM. GPU memory is 100% clean for LLM!\n")
+
+    # Phase 2: Load LLM Planner on GPU
+    print(f"[2/3] Phase 2: Loading LLM Planner ({args.llm_model})...")
     llm = LocalLLMEngine(model_name_or_path=args.llm_model)
 
-    # 3. Initialize Agent & Pipeline
+    # Phase 3: Initialize Agent & Pipeline
     agent = LifeMateAgent(llm_generate_fn=llm.generate, catalog=catalog, max_steps=4)
-    pipeline = LifeMatePipeline(agent=agent, asr_model=asr)
+    pipeline = LifeMatePipeline(agent=agent, asr_model=None, audio_transcripts=audio_transcripts)
 
     # Metrics collectors
     latencies: List[float] = []
@@ -184,17 +219,10 @@ def main():
     print("\n[3/3] Starting Benchmark Execution with Real-Time Logging...\n")
     print("=" * 75)
 
-    with open(train_file, "r", encoding="utf-8") as fin:
-        for idx, line in enumerate(fin):
-            if idx >= args.limit:
-                break
-            if not line.strip():
-                continue
-
-            item = json.loads(line)
-            sid = item["id"]
-            gold_calls = item["label"]["tool_calls"]
-            gold_text = item.get("audio_text", "")
+    for idx, item in enumerate(items_to_process):
+        sid = item["id"]
+        gold_calls = item["label"]["tool_calls"]
+        gold_text = item.get("audio_text", "")
 
             # Replay gold calls in ToolEnv to obtain true gold_hash
             env_gold = ToolEnv("train", sid, root=data_root)

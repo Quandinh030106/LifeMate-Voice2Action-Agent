@@ -55,39 +55,45 @@ class SkillGraph:
         "camera_id", "alert_id", "event_id", "ride_id", "item_id", "booking_id"
     }
 
-    # Semantic domain keywords for intent routing
+    # Official Competition Domain Keywords aligned directly with catalog groups
     DOMAIN_KEYWORDS: Dict[str, Set[str]] = {
         "finance": {
-            "chuyển tiền", "tiền", "tài khoản", "ngân hàng", "ví", "thanh toán", "số dư",
-            "nạp tiền", "rút tiền", "banking", "ewallet", "transfer", "balance", "beneficiary"
-        },
-        "mobility": {
-            "xe", "đặt xe", "chuyến đi", "bản đồ", "đường", "địa điểm", "tới", "đến",
-            "giao thông", "tắc đường", "transport", "ride", "maps", "traffic", "car", "bike"
-        },
-        "smarthome": {
-            "đèn", "quạt", "máy lạnh", "điều hòa", "công tắc", "khóa", "cửa", "robot",
-            "hút bụi", "năng lượng", "thiết bị", "smart_home", "light", "fan", "climate", "lock"
-        },
-        "productivity": {
-            "báo thức", "hẹn giờ", "nhắc nhở", "lịch", "sự kiện", "ghi chú", "nhắc",
-            "alarm", "reminder", "calendar", "notes", "schedule", "timer"
-        },
-        "media": {
-            "nhạc", "bài hát", "ca sĩ", "phát", "dừng", "âm lượng", "playlist", "video",
-            "music", "song", "media", "play", "volume", "artist"
+            "tiền", "ví", "nạp", "chuyển", "hóa đơn", "hoá đơn", "điện", "nước", "internet", "cước",
+            "thanh toán", "ngân hàng", "tài khoản", "số dư", "rút", "voucher", "điểm", "loyalty", "banking", "ewallet", "bill"
         },
         "communication": {
-            "gọi", "tin nhắn", "nhắn tin", "danh bạ", "email", "gửi tin", "sms",
-            "call", "message", "contacts", "chat", "send"
+            "nhắn", "gọi", "tin", "danh bạ", "sếp", "bố", "mẹ", "anh", "chị", "em", "bác", "cô",
+            "chú", "bạn", "gửi", "email", "chat", "zalo", "cuộc gọi", "liên hệ", "sms", "phone", "mail"
+        },
+        "planning": {
+            "lịch", "hẹn", "chạy bộ", "đá bóng", "họp", "sự kiện", "báo thức", "nhắc", "ghi chú",
+            "dời", "hoãn", "hủy", "huỷ", "giờ", "phút", "sáng", "chiều", "tối", "mai", "nay", "tuần", "tháng", "calendar", "alarm", "timer", "reminder"
         },
         "weather": {
-            "thời tiết", "mưa", "nắng", "nhiệt độ", "dự báo", "bão", "gió",
-            "weather", "forecast", "temperature", "rain"
+            "thời tiết", "mưa", "nắng", "nhiệt độ", "dự báo", "bão", "gió", "lạnh", "nóng", "weather", "forecast"
+        },
+        "information": {
+            "giá vàng", "vàng", "xăng", "xổ số", "tỷ giá", "tin tức", "tính", "đổi đơn vị", "thời tiết", "mưa", "nắng"
+        },
+        "mobility": {
+            "xe", "đặt xe", "chuyến đi", "bản đồ", "đường", "tới", "đến", "giao thông", "tắc đường",
+            "sân bay", "chuyến bay", "vé máy bay", "xe đạp", "grab", "be", "taxi", "ride", "flight", "map"
+        },
+        "home": {
+            "đèn", "quạt", "máy lạnh", "điều hòa", "cửa", "khóa", "robot", "hút bụi", "camera",
+            "nhà", "bật", "tắt", "phòng", "smart_home", "lock"
+        },
+        "food": {
+            "đồ ăn", "quán", "món", "cơm", "phở", "trà sữa", "giao hàng", "đơn hàng", "order", "food"
         },
         "shopping": {
-            "mua", "đặt hàng", "đơn hàng", "giỏ hàng", "món", "quán ăn", "đồ ăn",
-            "food", "order", "shopping", "cart", "restaurant", "delivery"
+            "mua sắm", "đơn hàng", "kiện hàng", "giao hàng", "chợ", "shopping", "package"
+        },
+        "media": {
+            "nhạc", "bài hát", "ca sĩ", "phát", "dừng", "âm lượng", "tivi", "kênh", "radio", "podcast", "music", "song"
+        },
+        "health": {
+            "thuốc", "uống thuốc", "sức khỏe", "tập thể dục", "calo", "bước"
         }
     }
 
@@ -207,10 +213,15 @@ class SkillGraph:
     def detect_active_domains(self, query: str) -> Set[str]:
         """Identify relevant semantic domains from user query text."""
         query_lower = query.lower()
+        q_words = set(re.findall(r"\w+", query_lower))
         active = set()
         for domain, kw_set in self.DOMAIN_KEYWORDS.items():
             for kw in kw_set:
-                if kw in query_lower:
+                if " " in kw:
+                    if kw in query_lower:
+                        active.add(domain)
+                        break
+                elif kw in q_words:
                     active.add(domain)
                     break
         return active
@@ -219,7 +230,7 @@ class SkillGraph:
         self,
         query: str,
         installed_tool_schemas: List[Dict[str, Any]],
-        max_tools: int = 18
+        max_tools: int = 22
     ) -> List[Dict[str, Any]]:
         """Prune completely irrelevant tool domains to prevent attention distraction and hallucinated calls.
 
@@ -252,15 +263,15 @@ class SkillGraph:
                 continue
 
             score = 0.0
+            # Direct official group alignment (finance, communication, planning, etc.)
+            if node.group in active_domains:
+                score += 8.0
+            if node.app.lower() in active_domains:
+                score += 8.0
+
             # Keyword match with tool name / desc
             matches = len(q_words & node.keywords)
             score += matches * 2.0
-
-            # Domain alignment match
-            for dom in active_domains:
-                dom_kws = self.DOMAIN_KEYWORDS.get(dom, set())
-                if any(k in node.keywords for k in dom_kws):
-                    score += 3.0
 
             # Same app bonus if any tool in app matched query
             app_id = node.app.lower()
