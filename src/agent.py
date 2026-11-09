@@ -63,16 +63,21 @@ class LifeMateAgent:
         # Exactly one ToolEnv per sample loaded from local environment
         env = ToolEnv(split, sample_id, root=data_root)
 
-        # 1. Extract tools allowed for this specific sample
+        # 1. Extract tools allowed for this specific sample (100% installed_apps)
         raw_tools = extract_available_tools(item, self.catalog)
 
-        # 2. Adaptive Skill Graph Pruning:
-        # Removes completely irrelevant distractor domains while preserving prerequisite read tools
-        tools = self.skill_graph.filter_tools_for_request(
-            query=user_request_text or "",
-            installed_tool_schemas=raw_tools,
-            max_tools=20
-        )
+        # 2. Skill Graph tool set:
+        # Provide all installed tools on the device (avg 30 tools) so model has complete visibility
+        # without hardcoded keyword pruning throwing away relevant tools!
+        if len(raw_tools) > 60:
+            tools = self.skill_graph.filter_tools_for_request(
+                query=user_request_text or "",
+                installed_tool_schemas=raw_tools,
+                max_tools=45
+            )
+        else:
+            tools = raw_tools
+
         # Device-level safety: all installed tools are legitimate to execute
         allowed_tool_names = set(t["function"]["name"] for t in raw_tools)
 
