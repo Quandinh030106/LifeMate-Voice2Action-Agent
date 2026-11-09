@@ -88,7 +88,7 @@ def parse_args():
                         help="LLM model HuggingFace ID or local path (default: models/lifemate-adaptive-qwen or Qwen/Qwen2.5-3B-Instruct).")
     parser.add_argument("--load_in_4bit", action="store_true",
                         help="Load LLM with 4-bit NF4 quantization to save memory.")
-    parser.add_argument("--max_steps", type=int, default=5,
+    parser.add_argument("--max_steps", type=int, default=4,
                         help="Max agent reasoning steps per sample.")
     return parser.parse_args()
 
@@ -297,9 +297,9 @@ def main():
             pct = (total_processed / total_in_split) * 100
             print(f"[{total_processed:03d}/{total_in_split}] ({pct:5.1f}%) Sample: {sample_id} | Time: {elapsed:.2f}s | Calls: {len(tool_calls)} | Hash: {state_hash[:10]}...")
 
-            # Free VRAM after every sample to prevent accumulation and fragmentation
+            # Free VRAM periodically to avoid fragmentation without stalling GPU
             del record, tool_calls, state_hash, meta
-            if torch.cuda.is_available():
+            if total_processed % 25 == 0 and torch.cuda.is_available():
                 torch.cuda.empty_cache()
 
     avg_time = total_time / total_processed if total_processed > 0 else 0.0

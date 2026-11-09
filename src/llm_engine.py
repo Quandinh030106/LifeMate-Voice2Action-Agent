@@ -123,10 +123,17 @@ class LocalLLMEngine:
                 self.model = self.model.to(self.device)
 
         # Stop when either EOS or </tool_call> is generated
-        self.stop_token_ids = [self.tokenizer.eos_token_id]
-        call_end_tokens = self.tokenizer.encode("</tool_call>")
-        if call_end_tokens:
-            self.stop_token_ids.extend(call_end_tokens)
+        self.stop_token_ids = [self.tokenizer.eos_token_id] if self.tokenizer.eos_token_id is not None else []
+        for tok_str in ["</tool_call>", "<|im_end|>", "<|endoftext|>"]:
+            t_id = self.tokenizer.convert_tokens_to_ids(tok_str)
+            if t_id is not None and t_id != getattr(self.tokenizer, "unk_token_id", None):
+                if t_id not in self.stop_token_ids:
+                    self.stop_token_ids.append(t_id)
+            else:
+                enc = self.tokenizer.encode(tok_str, add_special_tokens=False)
+                for eid in enc:
+                    if eid not in self.stop_token_ids:
+                        self.stop_token_ids.append(eid)
 
         self.model.eval()
 
@@ -135,7 +142,7 @@ class LocalLLMEngine:
         self,
         messages: List[Dict[str, Any]],
         tools: Optional[List[Dict[str, Any]]] = None,
-        max_new_tokens: int = 256
+        max_new_tokens: int = 128
     ) -> Dict[str, Any]:
         """Generate response and parsed tool calls using model chat template."""
         # Fix seeds for reproducibility
@@ -180,6 +187,7 @@ class LocalLLMEngine:
             "do_sample": False,
             "temperature": None,
             "top_p": None,
+            "eos_token_id": self.stop_token_ids,
             "pad_token_id": self.tokenizer.eos_token_id,
         }
 
@@ -192,7 +200,6 @@ class LocalLLMEngine:
             )
         except (TypeError, ValueError):
             # Fallback for transformers versions without stop_strings support
-            gen_kwargs["eos_token_id"] = self.stop_token_ids
             generated_ids = self.model.generate(
                 **inputs,
                 **gen_kwargs
