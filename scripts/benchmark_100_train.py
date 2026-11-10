@@ -20,6 +20,15 @@ import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
 
+import warnings
+import logging
+warnings.filterwarnings("ignore")
+try:
+    import transformers
+    transformers.logging.set_verbosity_error()
+except Exception:
+    pass
+
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
 
@@ -175,11 +184,21 @@ def main():
         asr = VietnameseASR(engine=args.asr_engine, device=asr_device)
 
         audio_files = []
+        seen_audios = set()
         for it in items_to_process:
-            if "audio" in it:
-                audio_files.append((it["audio"], split_dir / it["audio"]))
+            if "audio" in it and it["audio"]:
+                rel = it["audio"].replace("\\", "/")
+                if rel not in seen_audios:
+                    seen_audios.add(rel)
+                    audio_files.append((rel, split_dir / rel))
+            for turn in it.get("history", []):
+                if turn.get("role") == "user" and "audio" in turn and turn["audio"]:
+                    rel = turn["audio"].replace("\\", "/")
+                    if rel not in seen_audios:
+                        seen_audios.add(rel)
+                        audio_files.append((rel, split_dir / rel))
 
-        print(f"Transcribing {len(audio_files)} audio recordings on {asr_device}...")
+        print(f"Transcribing {len(audio_files)} unique audio recordings on {asr_device}...")
         t_asr_start = time.time()
         for rel_p, full_p in audio_files:
             if full_p.is_file():
@@ -224,113 +243,113 @@ def main():
         gold_calls = item["label"]["tool_calls"]
         gold_text = item.get("audio_text", "")
 
-            # Replay gold calls in ToolEnv to obtain true gold_hash
-            env_gold = ToolEnv("train", sid, root=data_root)
-            for c in gold_calls:
-                env_gold.call(c["name"], c.get("arguments", {}))
-            gold_hash = env_gold.get_state_hash()
+        # Replay gold calls in ToolEnv to obtain true gold_hash
+        env_gold = ToolEnv("train", sid, root=data_root)
+        for c in gold_calls:
+            env_gold.call(c["name"], c.get("arguments", {}))
+        gold_hash = env_gold.get_state_hash()
 
-            t0 = time.time()
+        t0 = time.time()
 
-            # End-to-end sample processing
-            pred_calls, pred_hash, meta = pipeline.process_sample(
-                item=item,
-                split_dir=split_dir,
-                split_name="train",
-                data_root=data_root,
-                use_audio=not args.no_audio
-            )
-            elapsed = time.time() - t0
-            latencies.append(elapsed)
+        # End-to-end sample processing
+        pred_calls, pred_hash, meta = pipeline.process_sample(
+            item=item,
+            split_dir=split_dir,
+            split_name="train",
+            data_root=data_root,
+            use_audio=not args.no_audio
+        )
+        elapsed = time.time() - t0
+        latencies.append(elapsed)
 
-            asr_text = meta.get("transcribed_text") or gold_text
+        asr_text = meta.get("transcribed_text") or gold_text
 
-            # 1. Compute ASR Metrics
-            if not args.no_audio and gold_text:
-                sample_wer = calculate_wer(gold_text, asr_text)
-                sample_cer = calculate_cer(gold_text, asr_text)
-                wers.append(sample_wer)
-                cers.append(sample_cer)
-            else:
-                sample_wer, sample_cer = 0.0, 0.0
+        # 1. Compute ASR Metrics
+        if not args.no_audio and gold_text:
+            sample_wer = calculate_wer(gold_text, asr_text)
+            sample_cer = calculate_cer(gold_text, asr_text)
+            wers.append(sample_wer)
+            cers.append(sample_cer)
+        else:
+            sample_wer, sample_cer = 0.0, 0.0
 
-            # 2. Compute Tool Call Metrics
-            # Greedy bipartite matching
-            matched_gold_indices = set()
-            matched_count = 0
-            for p in pred_calls:
-                for j, g in enumerate(gold_calls):
-                    if j not in matched_gold_indices and is_call_match(p, g, FREE_TEXT_KEYS):
-                        matched_gold_indices.add(j)
-                        matched_count += 1
-                        break
+        # 2. Compute Tool Call Metrics
+        # Greedy bipartite matching
+        matched_gold_indices = set()
+        matched_count = 0
+        for p in pred_calls:
+            for j, g in enumerate(gold_calls):
+                if j not in matched_gold_indices and is_call_match(p, g, FREE_TEXT_KEYS):
+                    matched_gold_indices.add(j)
+                    matched_count += 1
+                    break
 
-            M = matched_count
-            G = len(gold_calls)
-            P = len(pred_calls)
-            thua = P - M
-            thieu = G - M
+        M = matched_count
+        G = len(gold_calls)
+        P = len(pred_calls)
+        thua = P - M
+        thieu = G - M
 
-            if G == 0 and P == 0:
-                prec, rec, f1 = 1.0, 1.0, 1.0
-            elif M == 0:
-                prec = 0.0 if P > 0 else 1.0
-                rec = 0.0 if G > 0 else 1.0
-                f1 = 0.0
-            else:
-                prec = M / P if P > 0 else 0.0
-                rec = M / G if G > 0 else 0.0
-                f1 = 2 * prec * rec / (prec + rec) if (prec + rec) > 0 else 0.0
+        if G == 0 and P == 0:
+            prec, rec, f1 = 1.0, 1.0, 1.0
+        elif M == 0:
+            prec = 0.0 if P > 0 else 1.0
+            rec = 0.0 if G > 0 else 1.0
+            f1 = 0.0
+        else:
+            prec = M / P if P > 0 else 0.0
+            rec = M / G if G > 0 else 0.0
+            f1 = 2 * prec * rec / (prec + rec) if (prec + rec) > 0 else 0.0
 
-            precisions.append(prec)
-            recalls.append(rec)
-            f1s.append(f1)
+        precisions.append(prec)
+        recalls.append(rec)
+        f1s.append(f1)
 
-            # 3. State Hash Match & Score
-            is_hash_match = (pred_hash == gold_hash)
-            hash_matches.append(is_hash_match)
+        # 3. State Hash Match & Score
+        is_hash_match = (pred_hash == gold_hash)
+        hash_matches.append(is_hash_match)
 
-            score = (f1 * 100.0) if is_hash_match else 0.0
-            official_scores.append(score)
+        score = (f1 * 100.0) if is_hash_match else 0.0
+        official_scores.append(score)
 
-            # 4. Live Display on Log
-            hash_icon = "MATCH ✅" if is_hash_match else "MISMATCH ❌"
-            pred_names = [c["name"] for c in pred_calls]
-            gold_names = [c["name"] for c in gold_calls]
+        # 4. Live Display on Log
+        hash_icon = "MATCH ✅" if is_hash_match else "MISMATCH ❌"
+        pred_names = [c["name"] for c in pred_calls]
+        gold_names = [c["name"] for c in gold_calls]
 
-            print(f"[{idx+1:03d}/{args.limit:03d}] ({(idx+1)/args.limit*100:5.1f}%) Sample: {sid} | Thời gian: {elapsed:.2f}s")
-            if not args.no_audio:
-                print(f"🎙️ ASR Text:  \"{asr_text}\"")
-                print(f"📝 Gold Text: \"{gold_text}\"")
-                print(f"   • ASR Metrics:  WER = {sample_wer*100:5.1f}% | CER = {sample_cer*100:5.1f}%")
-            else:
-                print(f"📝 User Request: \"{gold_text}\"")
+        print(f"[{idx+1:03d}/{args.limit:03d}] ({(idx+1)/args.limit*100:5.1f}%) Sample: {sid} | Thời gian: {elapsed:.2f}s")
+        if not args.no_audio:
+            print(f"🎙️ ASR Text:  \"{asr_text}\"")
+            print(f"📝 Gold Text: \"{gold_text}\"")
+            print(f"   • ASR Metrics:  WER = {sample_wer*100:5.1f}% | CER = {sample_cer*100:5.1f}%")
+        else:
+            print(f"📝 User Request: \"{gold_text}\"")
 
-            print(f"🛠️ Tool Calls:  Đúng: {M}/{G} | Thừa: {thua} | Thiếu: {thieu} (P={prec:.2f}, R={rec:.2f}, F1={f1:.2f})")
-            print(f"   • Pred: {pred_names}")
-            print(f"   • Gold: {gold_names}")
-            print(f"🔑 State Hash:  {hash_icon} (Pred: {pred_hash[:10]}... | Gold: {gold_hash[:10]}...)")
-            print(f"🏆 Score:       {score:5.1f} / 100.0")
-            print("-" * 75)
+        print(f"🛠️ Tool Calls:  Đúng: {M}/{G} | Thừa: {thua} | Thiếu: {thieu} (P={prec:.2f}, R={rec:.2f}, F1={f1:.2f})")
+        print(f"   • Pred: {pred_names}")
+        print(f"   • Gold: {gold_names}")
+        print(f"🔑 State Hash:  {hash_icon} (Pred: {pred_hash[:10]}... | Gold: {gold_hash[:10]}...)")
+        print(f"🏆 Score:       {score:5.1f} / 100.0")
+        print("-" * 75)
 
-            out_records.append({
-                "id": sid,
-                "elapsed": elapsed,
-                "gold_text": gold_text,
-                "asr_text": asr_text,
-                "wer": sample_wer,
-                "cer": sample_cer,
-                "gold_calls": gold_calls,
-                "pred_calls": pred_calls,
-                "matched": M,
-                "thua": thua,
-                "thieu": thieu,
-                "precision": prec,
-                "recall": rec,
-                "f1": f1,
-                "hash_match": is_hash_match,
-                "score": score
-            })
+        out_records.append({
+            "id": sid,
+            "elapsed": elapsed,
+            "gold_text": gold_text,
+            "asr_text": asr_text,
+            "wer": sample_wer,
+            "cer": sample_cer,
+            "gold_calls": gold_calls,
+            "pred_calls": pred_calls,
+            "matched": M,
+            "thua": thua,
+            "thieu": thieu,
+            "precision": prec,
+            "recall": rec,
+            "f1": f1,
+            "hash_match": is_hash_match,
+            "score": score
+        })
 
     # Save detailed output file
     out_p = Path(args.output)

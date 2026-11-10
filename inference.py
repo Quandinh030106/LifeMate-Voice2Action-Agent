@@ -80,8 +80,8 @@ def parse_args():
                         help="Limit number of samples to process (for testing).")
     parser.add_argument("--asr_engine", type=str, default="gipformer", choices=["gipformer", "phowhisper", "openai", "whisper", "nvidia", "auto"],
                         help="ASR backend engine (default: gipformer on CPU).")
-    parser.add_argument("--asr_model", type=str, default="g-group-ai-lab/gipformer1.5-68M-rnnt",
-                        help="ASR model HuggingFace ID or local path (default: g-group-ai-lab/gipformer1.5-68M-rnnt).")
+    parser.add_argument("--asr_model", type=str, default=None,
+                        help="ASR model HuggingFace ID or local path (defaults to engine standard).")
     parser.add_argument("--recompute_transcripts", action="store_true",
                         help="Force recomputing audio transcripts even if cached transcripts file exists.")
     parser.add_argument("--llm_model", type=str, default="models/lifemate-adaptive-qwen",
@@ -152,13 +152,17 @@ def main():
             audio_transcripts = {}
 
     if not args.no_audio:
-        # Scan all required audio paths
+        # Scan required audio paths (respecting limit if testing)
         audio_rel_paths = set()
         with open(input_jsonl, encoding="utf-8") as fin_scan:
+            sample_cnt = 0
             for line in fin_scan:
                 if not line.strip():
                     continue
+                if args.limit is not None and sample_cnt >= args.limit:
+                    break
                 item = json.loads(line)
+                sample_cnt += 1
                 if "audio" in item and item["audio"]:
                     audio_rel_paths.add(item["audio"].replace("\\", "/"))
                 for turn in item.get("history", []):

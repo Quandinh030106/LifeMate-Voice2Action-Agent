@@ -19,12 +19,19 @@ import soundfile as sf
 import torch
 
 # ── Suppress known harmless transformers warnings ──────────────────────────────
+try:
+    import transformers
+    transformers.logging.set_verbosity_error()
+except Exception:
+    pass
 logging.getLogger("transformers").setLevel(logging.ERROR)
 warnings.filterwarnings("ignore", message=".*forced_decoder_ids.*")
 warnings.filterwarnings("ignore", message=".*generation_config.*")
 warnings.filterwarnings("ignore", message=".*max_new_tokens.*max_length.*")
 warnings.filterwarnings("ignore", message=".*clean_up_tokenization_spaces.*")
 warnings.filterwarnings("ignore", message=".*suppress_tokens.*begin_suppress_tokens.*")
+warnings.filterwarnings("ignore", message=".*multilingual Whisper.*")
+warnings.filterwarnings("ignore", message=".*torch_dtype.*")
 # ──────────────────────────────────────────────────────────────────────────────
 
 
@@ -186,18 +193,21 @@ class PhoWhisperASR:
         else:
             audio_input = {"raw": audio, "sampling_rate": 16000}
 
-        res = self.pipe(audio_input, return_timestamps=False)
+        gen_kw = {"language": language, "task": "transcribe"}
+        res = self.pipe(audio_input, return_timestamps=False, generate_kwargs=gen_kw)
         text = res["text"] if isinstance(res, dict) else str(res)
         return text.strip()
 
     def transcribe_batch(
         self,
         audio_paths: List[Union[str, Path]],
-        batch_size: int = 16
+        batch_size: int = 16,
+        language: str = "vi"
     ) -> List[str]:
         """Transcribe a batch of audio files using the pipeline."""
         str_paths = [str(Path(p).resolve()) for p in audio_paths]
-        results = self.pipe(str_paths, batch_size=batch_size, return_timestamps=False)
+        gen_kw = {"language": language, "task": "transcribe"}
+        results = self.pipe(str_paths, batch_size=batch_size, return_timestamps=False, generate_kwargs=gen_kw)
         return [r["text"].strip() if isinstance(r, dict) else str(r).strip() for r in results]
 
     def to_cpu(self):
@@ -239,7 +249,7 @@ class VietnameseASR:
                 self.engine_name = "phowhisper"
 
         elif engine in ("phowhisper", "vinai"):
-            default_model = model_id or "vinai/PhoWhisper-large"
+            default_model = model_id if (model_id and "gipformer" not in model_id.lower()) else "vinai/PhoWhisper-large"
             self._impl = PhoWhisperASR(model_id=default_model, device=self.device)
             self.engine_name = "phowhisper"
 
