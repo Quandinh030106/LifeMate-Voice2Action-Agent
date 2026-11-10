@@ -79,28 +79,34 @@ class GipformerASR:
             ) from e
 
         print(f"[Gipformer 1.5] Loading checkpoint ({model_id}) on CPU ({num_threads} threads)...")
-        model_dir = snapshot_download(repo_id=model_id)
+        if os.path.isdir(str(model_id)):
+            model_dir = str(model_id)
+        else:
+            model_dir = snapshot_download(repo_id=model_id)
+
+        import glob
+        def find_file(pattern: str) -> Optional[str]:
+            p = os.path.join(model_dir, pattern)
+            if os.path.isfile(p):
+                return p
+            matches = glob.glob(os.path.join(model_dir, "**", pattern), recursive=True)
+            return matches[0] if matches else None
 
         # Detect ONNX model files (prefer INT8 for CPU speed if present)
-        encoder_int8 = os.path.join(model_dir, "encoder.int8.onnx")
-        decoder_int8 = os.path.join(model_dir, "decoder.int8.onnx")
-        joiner_int8 = os.path.join(model_dir, "joiner.int8.onnx")
-
-        encoder = encoder_int8 if os.path.isfile(encoder_int8) else os.path.join(model_dir, "encoder.onnx")
-        decoder = decoder_int8 if os.path.isfile(decoder_int8) else os.path.join(model_dir, "decoder.onnx")
-        joiner = joiner_int8 if os.path.isfile(joiner_int8) else os.path.join(model_dir, "joiner.onnx")
+        encoder = find_file("encoder.int8.onnx") or find_file("encoder.onnx")
+        decoder = find_file("decoder.int8.onnx") or find_file("decoder.onnx")
+        joiner = find_file("joiner.int8.onnx") or find_file("joiner.onnx")
 
         # Locate tokens.txt
-        tokens = os.path.join(model_dir, "tokens.txt")
-        if not os.path.isfile(tokens):
-            for fname in os.listdir(model_dir):
-                if "token" in fname.lower() and fname.endswith(".txt"):
-                    tokens = os.path.join(model_dir, fname)
-                    break
+        tokens = find_file("tokens.txt")
+        if not tokens:
+            token_candidates = glob.glob(os.path.join(model_dir, "**", "*token*.txt"), recursive=True)
+            if token_candidates:
+                tokens = token_candidates[0]
 
-        if not os.path.isfile(tokens):
-            bpe_path = os.path.join(model_dir, "bpe.model")
-            if os.path.isfile(bpe_path):
+        if not tokens:
+            bpe_path = find_file("bpe.model")
+            if bpe_path and os.path.isfile(bpe_path):
                 import sentencepiece as spm
                 sp = spm.SentencePieceProcessor()
                 sp.load(bpe_path)
@@ -238,10 +244,18 @@ class VietnameseASR:
         self._impl = None
 
         if engine in ("auto", "gipformer"):
+            gip_cand = model_id or os.environ.get("GIP_DIR")
+            if not gip_cand or not os.path.isdir(str(gip_cand)):
+                import glob
+                cands = glob.glob("/kaggle/input/**/gipformer*", recursive=True)
+                for c in cands:
+                    if os.path.isdir(c):
+                        gip_cand = c
+                        break
+            if not gip_cand:
+                gip_cand = "g-group-ai-lab/gipformer1.5-68M-rnnt"
             try:
-                self._impl = GipformerASR(
-                    model_id=model_id or "g-group-ai-lab/gipformer1.5-68M-rnnt"
-                )
+                self._impl = GipformerASR(model_id=gip_cand)
                 self.engine_name = "gipformer"
             except Exception as e:
                 print(f"[ASR Warning] Could not initialize Gipformer ({e}). Falling back to PhoWhisper...")

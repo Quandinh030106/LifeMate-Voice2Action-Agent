@@ -106,8 +106,10 @@ def parse_args():
                         help="Number of samples to benchmark (default: 100).")
     parser.add_argument("--llm_model", type=str, default="/kaggle/working/models/lifemate-qwen3-4b-merged",
                         help="Path or HuggingFace ID of LLM.")
-    parser.add_argument("--asr_engine", type=str, default="phowhisper", choices=["phowhisper", "gipformer", "auto"],
-                        help="ASR backend engine (default: phowhisper).")
+    parser.add_argument("--asr_engine", type=str, default="gipformer", choices=["gipformer", "phowhisper", "auto"],
+                        help="ASR backend engine (default: gipformer on CPU).")
+    parser.add_argument("--asr_model", type=str, default=None,
+                        help="Path or HuggingFace ID of ASR model (defaults to GIP_DIR or gipformer repo).")
     parser.add_argument("--no_audio", action="store_true",
                         help="Skip audio & ASR (text-only evaluation).")
     parser.add_argument("--max_steps", type=int, default=6,
@@ -183,7 +185,7 @@ def main():
         print(f"\n[1/3] Phase 1: Transcribing audio with ASR ({args.asr_engine})...")
         # If Kaggle has GPU 1 available, use GPU 1 for ASR, else GPU 0 or CPU
         asr_device = "cuda:1" if (torch.cuda.is_available() and torch.cuda.device_count() > 1) else ("cuda:0" if torch.cuda.is_available() else "cpu")
-        asr = VietnameseASR(engine=args.asr_engine, device=asr_device)
+        asr = VietnameseASR(engine=args.asr_engine, model_id=args.asr_model, device=asr_device)
 
         audio_files = []
         seen_audios = set()

@@ -18,6 +18,7 @@ from .prompt_builder import (
     build_messages,
 )
 from .skill_graph import SkillGraph
+from .normalizer import normalize_tool_arguments
 
 
 class LifeMateAgent:
@@ -99,6 +100,19 @@ class LifeMateAgent:
             # If LLM produces NO tool calls, it indicates out-of-scope or completion
             if not tool_calls:
                 break
+
+            # Normalize arguments against official BTC formats & canonical schemas
+            normalized_calls = []
+            for tc in tool_calls:
+                tname = tc.get("name", "")
+                targs = normalize_tool_arguments(
+                    tname,
+                    tc.get("arguments") or {},
+                    item,
+                    user_request_text=user_request_text or ""
+                )
+                normalized_calls.append({"name": tname, "arguments": targs})
+            tool_calls = normalized_calls
 
             # Add assistant message to history
             assistant_turn: Dict[str, Any] = {
