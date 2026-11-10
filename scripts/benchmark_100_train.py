@@ -110,6 +110,8 @@ def parse_args():
                         help="ASR backend engine (default: phowhisper).")
     parser.add_argument("--no_audio", action="store_true",
                         help="Skip audio & ASR (text-only evaluation).")
+    parser.add_argument("--max_steps", type=int, default=6,
+                        help="Maximum reasoning steps per sample (default: 6).")
     parser.add_argument("--output", type=str, default="/kaggle/working/benchmark_100_results.jsonl",
                         help="Path to save detailed benchmark log.")
     return parser.parse_args()
@@ -220,7 +222,7 @@ def main():
     llm = LocalLLMEngine(model_name_or_path=args.llm_model)
 
     # Phase 3: Initialize Agent & Pipeline
-    agent = LifeMateAgent(llm_generate_fn=llm.generate, catalog=catalog, max_steps=4)
+    agent = LifeMateAgent(llm_generate_fn=llm.generate, catalog=catalog, max_steps=args.max_steps)
     pipeline = LifeMatePipeline(agent=agent, asr_model=None, audio_transcripts=audio_transcripts)
 
     # Metrics collectors

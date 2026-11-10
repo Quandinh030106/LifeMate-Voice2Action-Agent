@@ -27,7 +27,7 @@ class LifeMateAgent:
         self,
         llm_generate_fn: Callable[[List[Dict[str, Any]], List[Dict[str, Any]]], Dict[str, Any]],
         catalog: Dict[str, Any],
-        max_steps: int = 4,
+        max_steps: int = 6,
         skill_graph: Optional[SkillGraph] = None,
     ):
         """

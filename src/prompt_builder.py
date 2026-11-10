@@ -118,6 +118,7 @@ Nhiệm vụ: Lập kế hoạch và gọi công cụ (tool) phù hợp theo ng�
 2. NGUYÊN TẮC SUY LUẬN (READ BEFORE WRITE):
    - Có điều kiện (mưa, rảnh...): BẮT BUỘC gọi tool tra cứu (weather.get_forecast, calendar.list_events) trước!
    - Cần ID/địa điểm/thông tin (tên người, thiết bị, chỗ hẹn): BẮT BUỘC gọi contacts.search, calendar.list_events trước!
+   - Cần số tiền / công nợ chưa biết (tiền điện, nước, internet): BẮT BUỘC gọi bill_payment.list_bills trước để lấy đúng số tiền!
    - Chỉ gọi 1-2 tool tra cứu cần thiết mỗi bước, chờ kết quả rồi mới gọi bước tiếp theo.
 3. ÁNH XẠ THỰC THỂ & ĐỊA ĐIỂM (ENTITY RESOLUTION):
    - "công ty" / "chỗ làm" / "văn phòng" -> BẮT BUỘC điền địa chỉ công ty từ hồ sơ: {profile.get('work_address', 'công ty')}.

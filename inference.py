@@ -88,8 +88,8 @@ def parse_args():
                         help="LLM model HuggingFace ID or local path (default: models/lifemate-adaptive-qwen or Qwen/Qwen2.5-3B-Instruct).")
     parser.add_argument("--load_in_4bit", action="store_true",
                         help="Load LLM with 4-bit NF4 quantization to save memory.")
-    parser.add_argument("--max_steps", type=int, default=4,
-                        help="Max agent reasoning steps per sample.")
+    parser.add_argument("--max_steps", type=int, default=6,
+                        help="Max agent reasoning steps per sample (default: 6).")
     return parser.parse_args()
 
 
