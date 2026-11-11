@@ -178,4 +178,11 @@ def normalize_tool_arguments(
     if "phone" in args:
         args["phone"] = str(args["phone"]).strip()
 
+    # 6. Schema Pruning for alarm.create (removes extra hallucinated keys like 'label' or 'name')
+    if tool_name == "alarm.create":
+        if "label" in args:
+            del args["label"]
+        if "name" in args:
+            del args["name"]
+
     return args

@@ -79,12 +79,18 @@ class GipformerASR:
             ) from e
 
         print(f"[Gipformer 1.5] Loading checkpoint ({model_id}) on CPU ({num_threads} threads)...")
+        import glob
         if os.path.isdir(str(model_id)):
             model_dir = str(model_id)
+            # If the local folder only contains PyTorch weights (.pt) without ONNX files,
+            # automatically download the official ONNX release for CPU inference
+            onnx_check = glob.glob(os.path.join(model_dir, "**", "*encoder*.onnx"), recursive=True)
+            if not onnx_check:
+                print(f"[Gipformer 1.5] Folder '{model_dir}' does not contain ONNX models (only .pt).")
+                print("[Gipformer 1.5] Downloading official ONNX release from g-group-ai-lab/gipformer1.5-68M-rnnt...")
+                model_dir = snapshot_download(repo_id="g-group-ai-lab/gipformer1.5-68M-rnnt")
         else:
             model_dir = snapshot_download(repo_id=model_id)
-
-        import glob
         def find_file(pattern: str) -> Optional[str]:
             p = os.path.join(model_dir, pattern)
             if os.path.isfile(p):
