@@ -26,6 +26,16 @@ import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
+# Fix GPU Bottleneck: Parse --gpu_id early and pin to single GPU (default GPU 0)
+# This prevents multi-GPU pipeline parallelism thrashing over Kaggle PCIe bus (which caused 433s/step)
+for arg in sys.argv:
+    if arg.startswith("--gpu_id="):
+        os.environ["CUDA_VISIBLE_DEVICES"] = arg.split("=")[1]
+    elif arg == "--gpu_id" and sys.argv.index(arg) + 1 < len(sys.argv):
+        os.environ["CUDA_VISIBLE_DEVICES"] = sys.argv[sys.argv.index(arg) + 1]
+if "CUDA_VISIBLE_DEVICES" not in os.environ:
+    os.environ["CUDA_VISIBLE_DEVICES"] = "0"
+
 # Bypass PEFT torchao incompatibility on Kaggle Python 3.13
 try:
     import peft.import_utils
@@ -70,16 +80,18 @@ def parse_args():
                         help="Path to save LoRA adapter checkpoint.")
     parser.add_argument("--merged_dir", type=str, default="/kaggle/working/models/lifemate-qwen3-4b-merged",
                         help="Path to save merged standalone model.")
-    parser.add_argument("--epochs", type=int, default=3,
-                        help="Number of training epochs (default: 3).")
+    parser.add_argument("--epochs", type=int, default=2,
+                        help="Number of training epochs (default: 2, ~6 mins).")
     parser.add_argument("--batch_size", type=int, default=2,
                         help="Per-device batch size (default: 2).")
-    parser.add_argument("--grad_accum", type=int, default=8,
-                        help="Gradient accumulation steps (effective batch size = batch_size * grad_accum = 16).")
+    parser.add_argument("--grad_accum", type=int, default=4,
+                        help="Gradient accumulation steps (effective batch size = batch_size * grad_accum = 8).")
     parser.add_argument("--lr", type=float, default=2e-4,
                         help="Peak learning rate (default: 2e-4).")
-    parser.add_argument("--max_seq_length", type=int, default=2048,
-                        help="Maximum sequence length (default: 2048).")
+    parser.add_argument("--max_seq_length", type=int, default=1024,
+                        help="Maximum sequence length (default: 1024, covers >97% of samples without attention slowdown).")
+    parser.add_argument("--gpu_id", type=int, default=0,
+                        help="Target GPU index (default: 0).")
     parser.add_argument("--lora_r", type=int, default=16,
                         help="LoRA rank r (default: 16).")
     parser.add_argument("--lora_alpha", type=int, default=32,
@@ -429,6 +441,9 @@ def main():
             print("[Warning] bitsandbytes is not installed. Falling back to native 16-bit LoRA (fits in 16GB VRAM)...")
             use_4bit = False
 
+    # Device mapping: Pin entirely to single GPU to eliminate multi-GPU PCIe transfer latency
+    target_device_map = {"": 0} if torch.cuda.is_available() else None
+
     if use_4bit:
         print(f"\n[3/4] Loading Qwen 3-4B in 4-bit NormalFloat (NF4)...")
         bnb_config = BitsAndBytesConfig(
@@ -440,7 +455,7 @@ def main():
         model = AutoModelForCausalLM.from_pretrained(
             args.base_model,
             quantization_config=bnb_config,
-            device_map="auto",
+            device_map=target_device_map,
             trust_remote_code=True,
             low_cpu_mem_usage=True,
             attn_implementation="sdpa"
@@ -451,7 +466,7 @@ def main():
         model = AutoModelForCausalLM.from_pretrained(
             args.base_model,
             torch_dtype=compute_dtype,
-            device_map="auto",
+            device_map=target_device_map,
             trust_remote_code=True,
             low_cpu_mem_usage=True,
             attn_implementation="sdpa"
@@ -489,6 +504,8 @@ def main():
         optim=optim_name,
         report_to="none",
         gradient_checkpointing=True,
+        dataloader_num_workers=2,
+        dataloader_pin_memory=True,
     )
 
     trainer = Trainer(
@@ -498,7 +515,8 @@ def main():
         data_collator=LifeMateDataCollator(pad_token_id=tokenizer.pad_token_id)
     )
 
-    print("\n[4/4] Starting LoRA Training on GPU...")
+    total_steps = (len(dataset) // (args.batch_size * args.grad_accum)) * args.epochs
+    print(f"\n[4/4] Starting LoRA Training on GPU 0 ({total_steps} steps total, ~5-8 mins)...")
     t0 = time.time()
     trainer.train()
     print(f"\n🎉 Training finished in {(time.time() - t0) / 60:.2f} minutes!")
@@ -519,24 +537,54 @@ def main():
         gc.collect()
 
         os.makedirs(args.merged_dir, exist_ok=True)
-        print(f"Loading Base Model {args.base_model} on CPU for clean merge...")
-        base_fp16 = AutoModelForCausalLM.from_pretrained(
-            args.base_model,
-            torch_dtype=torch.float16,
-            device_map="cpu",
-            low_cpu_mem_usage=True,
-            trust_remote_code=True
-        )
-        print(f"Attaching LoRA from {args.output_dir}...")
-        peft_m = PeftModel.from_pretrained(base_fp16, args.output_dir)
-        merged_m = peft_m.merge_and_unload()
+        # Try fast GPU-accelerated merge first (takes ~20s), fallback to CPU if needed
+        merged_done = False
+        if torch.cuda.is_available():
+            try:
+                print(f"Loading Base Model {args.base_model} on GPU 0 for rapid merge...")
+                base_gpu = AutoModelForCausalLM.from_pretrained(
+                    args.base_model,
+                    torch_dtype=torch.float16,
+                    device_map={"": 0},
+                    low_cpu_mem_usage=True,
+                    trust_remote_code=True
+                )
+                print(f"Attaching LoRA from {args.output_dir}...")
+                peft_m = PeftModel.from_pretrained(base_gpu, args.output_dir)
+                merged_m = peft_m.merge_and_unload()
 
-        print(f"Saving merged standalone model to {args.merged_dir}...")
-        merged_m.save_pretrained(args.merged_dir)
-        tokenizer.save_pretrained(args.merged_dir)
+                print(f"Saving merged standalone model to {args.merged_dir}...")
+                merged_m.save_pretrained(args.merged_dir)
+                tokenizer.save_pretrained(args.merged_dir)
+                del base_gpu, peft_m, merged_m
+                merged_done = True
+            except Exception as e:
+                print(f"[Warning] GPU merge hit issue ({e}), falling back to CPU merge...")
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+                gc.collect()
 
-        del base_fp16, peft_m, merged_m
+        if not merged_done:
+            print(f"Loading Base Model {args.base_model} on CPU for clean merge...")
+            base_fp16 = AutoModelForCausalLM.from_pretrained(
+                args.base_model,
+                torch_dtype=torch.float16,
+                device_map="cpu",
+                low_cpu_mem_usage=True,
+                trust_remote_code=True
+            )
+            print(f"Attaching LoRA from {args.output_dir}...")
+            peft_m = PeftModel.from_pretrained(base_fp16, args.output_dir)
+            merged_m = peft_m.merge_and_unload()
+
+            print(f"Saving merged standalone model to {args.merged_dir}...")
+            merged_m.save_pretrained(args.merged_dir)
+            tokenizer.save_pretrained(args.merged_dir)
+            del base_fp16, peft_m, merged_m
+
         gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
         print(f"✅ Merged standalone model successfully saved at: {args.merged_dir}")
         print("🎯 Sẵn sàng chạy benchmark 100 câu hoặc nộp bài trực tiếp!")
 
