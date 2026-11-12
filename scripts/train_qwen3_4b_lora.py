@@ -248,14 +248,14 @@ def build_sample_messages(
 
 
 class LifeMateSFTDataset(Dataset):
-    """PyTorch Dataset that masks non-assistant tokens with -100."""
+    """PyTorch Dataset that pre-tokenizes and masks non-assistant tokens with -100."""
 
     def __init__(
         self,
         samples: List[Dict[str, Any]],
         catalog: Dict[str, Any],
         tokenizer: Any,
-        max_length: int = 2048,
+        max_length: int = 1024,
         seed: int = 42
     ):
         self.samples = samples
@@ -269,10 +269,16 @@ class LifeMateSFTDataset(Dataset):
         self.asst_start_tokens = tokenizer.encode("<|im_start|>assistant\n", add_special_tokens=False)
         self.im_end_tokens = tokenizer.encode("<|im_end|>", add_special_tokens=False)
 
-    def __len__(self):
-        return len(self.samples)
+        # Pre-cache all samples in memory to eliminate on-the-fly Jinja2 template CPU bottlenecks
+        print(f"Pre-tokenizing {len(self.samples)} samples into memory for zero CPU latency...")
+        t_pre = time.time()
+        self.cached_features: List[Dict[str, torch.Tensor]] = []
+        for idx in range(len(self.samples)):
+            feat = self._process_item(idx)
+            self.cached_features.append(feat)
+        print(f"✅ Pre-tokenization complete in {time.time() - t_pre:.2f}s! All features cached in RAM.")
 
-    def __getitem__(self, idx: int) -> Dict[str, torch.Tensor]:
+    def _process_item(self, idx: int) -> Dict[str, torch.Tensor]:
         item = self.samples[idx]
         messages, tools = build_sample_messages(item, self.catalog, self.rng)
 
@@ -309,7 +315,6 @@ class LifeMateSFTDataset(Dataset):
         labels = torch.full_like(input_ids, -100)
 
         # Exact Assistant Span Unmasking
-        # Mask everything except tokens generated between <|im_start|>assistant and <|im_end|>
         ids_list = input_ids.tolist()
         asst_hdr = self.asst_start_tokens
         end_hdr = self.im_end_tokens
@@ -317,10 +322,8 @@ class LifeMateSFTDataset(Dataset):
         i = 0
         n = len(ids_list)
         while i < n:
-            # Check for <|im_start|>assistant
             if ids_list[i:i + len(asst_hdr)] == asst_hdr:
                 start_idx = i + len(asst_hdr)
-                # Find matching <|im_end|>
                 end_idx = n
                 j = start_idx
                 while j < n:
@@ -328,7 +331,6 @@ class LifeMateSFTDataset(Dataset):
                         end_idx = j + len(end_hdr)
                         break
                     j += 1
-                # Unmask assistant tokens
                 labels[start_idx:end_idx] = input_ids[start_idx:end_idx]
                 i = end_idx
             else:
@@ -339,6 +341,12 @@ class LifeMateSFTDataset(Dataset):
             "attention_mask": attention_mask,
             "labels": labels
         }
+
+    def __len__(self):
+        return len(self.cached_features)
+
+    def __getitem__(self, idx: int) -> Dict[str, torch.Tensor]:
+        return self.cached_features[idx]
 
 
 def collate_fn(batch: List[Dict[str, torch.Tensor]], pad_token_id: int) -> Dict[str, torch.Tensor]:
@@ -431,8 +439,19 @@ def main():
     )
     print(f"✅ Dataset prepared: {len(dataset)} training examples.")
 
-    # 4. Load Base Model
-    compute_dtype = torch.bfloat16 if (torch.cuda.is_available() and torch.cuda.is_bf16_supported()) else torch.float16
+    # 4. Hardware-Aware Precision & Device Placement
+    # Turing T4 (Compute Capability 7.5) has 320 Tensor Cores supporting hardware FP16 (65 TFLOPS).
+    # T4 DOES NOT support hardware BF16! Running BF16 on T4 falls back to slow CUDA software emulation.
+    # Native BF16 Tensor Cores only exist on Ampere+ (Compute Capability >= 8.0, e.g. A100, RTX 3000+, L4).
+    if torch.cuda.is_available():
+        major, _ = torch.cuda.get_device_capability(0)
+        if major >= 8 and torch.cuda.is_bf16_supported():
+            compute_dtype = torch.bfloat16
+        else:
+            compute_dtype = torch.float16
+    else:
+        compute_dtype = torch.float32
+
     use_4bit = args.load_in_4bit
     if use_4bit:
         try:
@@ -462,7 +481,7 @@ def main():
         )
         model = prepare_model_for_kbit_training(model)
     else:
-        print(f"\n[3/4] Loading Qwen 3-4B in native {compute_dtype} precision (optimal for 16GB VRAM, no quantization noise)...")
+        print(f"\n[3/4] Loading Qwen 3-4B in native {compute_dtype} precision (Hardware Tensor Cores enabled)...")
         model = AutoModelForCausalLM.from_pretrained(
             args.base_model,
             torch_dtype=compute_dtype,
@@ -504,7 +523,7 @@ def main():
         optim=optim_name,
         report_to="none",
         gradient_checkpointing=True,
-        dataloader_num_workers=2,
+        dataloader_num_workers=0,
         dataloader_pin_memory=True,
     )
 
