@@ -82,14 +82,14 @@ def parse_args():
                         help="Path to save merged standalone model.")
     parser.add_argument("--epochs", type=int, default=2,
                         help="Number of training epochs (default: 2, ~6 mins).")
-    parser.add_argument("--batch_size", type=int, default=2,
-                        help="Per-device batch size (default: 2).")
-    parser.add_argument("--grad_accum", type=int, default=4,
+    parser.add_argument("--batch_size", type=int, default=1,
+                        help="Per-device batch size (default: 1 for memory efficiency with long sequences).")
+    parser.add_argument("--grad_accum", type=int, default=8,
                         help="Gradient accumulation steps (effective batch size = batch_size * grad_accum = 8).")
     parser.add_argument("--lr", type=float, default=2e-4,
                         help="Peak learning rate (default: 2e-4).")
-    parser.add_argument("--max_seq_length", type=int, default=1024,
-                        help="Maximum sequence length (default: 1024, covers >97% of samples without attention slowdown).")
+    parser.add_argument("--max_seq_length", type=int, default=2560,
+                        help="Maximum sequence length (default: 2560, prevents assistant label truncation).")
     parser.add_argument("--gpu_id", type=int, default=0,
                         help="Target GPU index (default: 0).")
     parser.add_argument("--lora_r", type=int, default=16,
@@ -151,8 +151,20 @@ def build_sample_messages(
     catalog: Dict[str, Any],
     rng: random.Random
 ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
-    """Convert one ground truth sample into multi-turn messages and available tools."""
-    tools = extract_available_tools(item, catalog)
+    """Convert one ground truth sample into multi-turn messages and available tools.
+    Prunes distractor tools so tool schemas never blow up prompt length beyond max_seq_length.
+    """
+    all_tools = extract_available_tools(item, catalog)
+    gold_names = set(tc["name"] for tc in item.get("label", {}).get("tool_calls", []))
+    gold_names.add("sys.ask_missing_info")
+
+    # Mandatory: all gold tools used in trajectory
+    tools = [t for t in all_tools if t["function"]["name"] in gold_names]
+    # Distractors: up to 2 random unused tools from the installed apps for negative training
+    distractors = [t for t in all_tools if t["function"]["name"] not in gold_names]
+    rng.shuffle(distractors)
+    tools.extend(distractors[:2])
+
     system_prompt = build_system_prompt(item)
     messages: List[Dict[str, Any]] = [
         {"role": "system", "content": system_prompt}
@@ -255,7 +267,7 @@ class LifeMateSFTDataset(Dataset):
         samples: List[Dict[str, Any]],
         catalog: Dict[str, Any],
         tokenizer: Any,
-        max_length: int = 1024,
+        max_length: int = 2560,
         seed: int = 42
     ):
         self.samples = samples
