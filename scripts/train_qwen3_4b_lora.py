@@ -276,7 +276,10 @@ class LifeMateSFTDataset(Dataset):
         for idx in range(len(self.samples)):
             feat = self._process_item(idx)
             self.cached_features.append(feat)
+        total_unmasked = sum((feat["labels"] != -100).sum().item() for feat in self.cached_features)
+        avg_unmasked = total_unmasked / max(1, len(self.cached_features))
         print(f"✅ Pre-tokenization complete in {time.time() - t_pre:.2f}s! All features cached in RAM.")
+        print(f"   • Unmasked Assistant Tokens: {total_unmasked:,} (~{avg_unmasked:.1f} tokens/sample)")
 
     def _process_item(self, idx: int) -> Dict[str, torch.Tensor]:
         item = self.samples[idx]
