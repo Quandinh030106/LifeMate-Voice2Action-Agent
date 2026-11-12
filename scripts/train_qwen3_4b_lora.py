@@ -84,6 +84,8 @@ def parse_args():
                         help="LoRA rank r (default: 16).")
     parser.add_argument("--lora_alpha", type=int, default=32,
                         help="LoRA alpha (default: 32).")
+    parser.add_argument("--load_in_4bit", action="store_true",
+                        help="Use 4-bit NormalFloat quantization (requires bitsandbytes). Default: False (native 16-bit LoRA).")
     parser.add_argument("--no_merge", action="store_true",
                         help="Skip merging LoRA into base model.")
     return parser.parse_args()
@@ -408,26 +410,43 @@ def main():
     )
     print(f"✅ Dataset prepared: {len(dataset)} training examples.")
 
-    # 4. Load 4-bit Base Model
-    print(f"\n[3/4] Loading Qwen 3-4B in 4-bit NormalFloat (NF4) for efficient VRAM...")
-    compute_dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
-    bnb_config = BitsAndBytesConfig(
-        load_in_4bit=True,
-        bnb_4bit_quant_type="nf4",
-        bnb_4bit_compute_dtype=compute_dtype,
-        bnb_4bit_use_double_quant=True
-    )
+    # 4. Load Base Model
+    compute_dtype = torch.bfloat16 if (torch.cuda.is_available() and torch.cuda.is_bf16_supported()) else torch.float16
+    use_4bit = args.load_in_4bit
+    if use_4bit:
+        try:
+            import bitsandbytes
+        except ImportError:
+            print("[Warning] bitsandbytes is not installed. Falling back to native 16-bit LoRA (fits in 16GB VRAM)...")
+            use_4bit = False
 
-    model = AutoModelForCausalLM.from_pretrained(
-        args.base_model,
-        quantization_config=bnb_config,
-        device_map="auto",
-        trust_remote_code=True,
-        low_cpu_mem_usage=True,
-        attn_implementation="sdpa"
-    )
-
-    model = prepare_model_for_kbit_training(model)
+    if use_4bit:
+        print(f"\n[3/4] Loading Qwen 3-4B in 4-bit NormalFloat (NF4)...")
+        bnb_config = BitsAndBytesConfig(
+            load_in_4bit=True,
+            bnb_4bit_quant_type="nf4",
+            bnb_4bit_compute_dtype=compute_dtype,
+            bnb_4bit_use_double_quant=True
+        )
+        model = AutoModelForCausalLM.from_pretrained(
+            args.base_model,
+            quantization_config=bnb_config,
+            device_map="auto",
+            trust_remote_code=True,
+            low_cpu_mem_usage=True,
+            attn_implementation="sdpa"
+        )
+        model = prepare_model_for_kbit_training(model)
+    else:
+        print(f"\n[3/4] Loading Qwen 3-4B in native {compute_dtype} precision (optimal for 16GB VRAM, no quantization noise)...")
+        model = AutoModelForCausalLM.from_pretrained(
+            args.base_model,
+            torch_dtype=compute_dtype,
+            device_map="auto",
+            trust_remote_code=True,
+            low_cpu_mem_usage=True,
+            attn_implementation="sdpa"
+        )
 
     # 5. Apply LoRA Config
     peft_config = LoraConfig(
@@ -443,6 +462,7 @@ def main():
 
     # 6. Training Arguments
     os.makedirs(args.output_dir, exist_ok=True)
+    optim_name = "paged_adamw_8bit" if use_4bit else "adamw_torch"
     training_args = TrainingArguments(
         output_dir=args.output_dir,
         num_train_epochs=args.epochs,
@@ -457,7 +477,7 @@ def main():
         logging_steps=10,
         save_strategy="epoch",
         save_total_limit=1,
-        optim="paged_adamw_8bit",
+        optim=optim_name,
         report_to="none",
         gradient_checkpointing=True,
         dataloader_num_workers=2,
