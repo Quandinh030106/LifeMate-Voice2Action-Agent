@@ -359,6 +359,15 @@ def collate_fn(batch: List[Dict[str, torch.Tensor]], pad_token_id: int) -> Dict[
     }
 
 
+class LifeMateDataCollator:
+    """Serializable collator class compatible with PyTorch DataLoader."""
+    def __init__(self, pad_token_id: int):
+        self.pad_token_id = pad_token_id
+
+    def __call__(self, batch: List[Dict[str, torch.Tensor]]) -> Dict[str, torch.Tensor]:
+        return collate_fn(batch, self.pad_token_id)
+
+
 def main():
     args = parse_args()
 
@@ -470,7 +479,7 @@ def main():
         gradient_accumulation_steps=args.grad_accum,
         learning_rate=args.lr,
         lr_scheduler_type="cosine",
-        warmup_ratio=0.05,
+        warmup_steps=15,
         weight_decay=0.01,
         fp16=(compute_dtype == torch.float16),
         bf16=(compute_dtype == torch.bfloat16),
@@ -480,14 +489,13 @@ def main():
         optim=optim_name,
         report_to="none",
         gradient_checkpointing=True,
-        dataloader_num_workers=2,
     )
 
     trainer = Trainer(
         model=model,
         args=training_args,
         train_dataset=dataset,
-        data_collator=lambda b: collate_fn(b, pad_token_id=tokenizer.pad_token_id)
+        data_collator=LifeMateDataCollator(pad_token_id=tokenizer.pad_token_id)
     )
 
     print("\n[4/4] Starting LoRA Training on GPU...")
